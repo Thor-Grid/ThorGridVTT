@@ -72,7 +72,7 @@ function createWindow(userDataPath) {
     });
 
     // Open DevTools - remove for production builds
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
 
     mainWindow.on('closed', () => {
         mainWindow = null;
