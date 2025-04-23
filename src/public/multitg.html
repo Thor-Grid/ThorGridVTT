@@ -1,0 +1,2055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- Updated CSP -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: https:;
+        connect-src 'self' ws: wss: http: https:;
+        font-src 'self';
+        object-src 'none';
+    ">
+    <title>Thor-Grid</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <style>
+        @supports (padding: env(safe-area-inset-top)) {
+            body {
+                padding-top: env(safe-area-inset-top);
+                padding-bottom: env(safe-area-inset-bottom);
+                padding-left: env(safe-area-inset-left);
+                padding-right: env(safe-area-inset-right);
+            }
+        }
+
+        .token-name {
+            position: fixed;
+            pointer-events: none;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            white-space: nowrap;
+            z-index: 10;
+            transform: translate(-50%, -100%);
+            transition: opacity 0.2s ease;
+        }
+
+        .dark-mode .token-name {
+            background-color: rgba(255, 255, 255, 0.7);
+            color: black;
+        }
+
+        .token-name.hovered {
+            opacity: 1 !important;
+            font-weight: bold;
+            background-color: rgba(0, 0, 255, 0.3);
+            color: white;
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .dark-mode .token-name.hovered {
+            background-color: rgba(0, 0, 255, 0.3);
+            color: white;
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+        }
+
+        #grid-container, canvas {
+            width: 100vw !important;
+            height: 100vh !important;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        body {
+            background-color: white;
+            color: black;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        canvas {
+            border: 1px solid black;
+            background-color: transparent;
+            touch-action: none;
+        }
+
+        body.dark-mode {
+            background-color: #121212;
+            color: white;
+        }
+
+        canvas.dark-mode {
+            border: 1px solid white;
+        }
+
+        #grid-container {
+            position: relative;
+            overflow: hidden;
+        }
+
+        #add-token-form, #player-token-form, #background-form {
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 8px;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 10;
+        }
+
+        #add-token-form.dark-mode, #player-token-form.dark-mode, #background-form.dark-mode {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+
+        #add-token-form input,
+        #add-token-form select,
+        #player-token-form input,
+        #player-token-form select,
+        #background-form input,
+        #background-form select {
+            margin-bottom: 6px;
+            padding: 6px;
+            font-size: 14px;
+        }
+
+        #controls-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 11;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 10px;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            width: 220px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        #controls-container.dark-mode {
+            background-color: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        #core-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        details {
+            margin-bottom: 8px;
+        }
+
+        summary {
+            cursor: pointer;
+            padding: 6px;
+            background-color: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        details[open] summary {
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        .dark-mode summary {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .dark-mode details[open] summary {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+
+        #instructions {
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        #instructions.dark-mode {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+
+        #toggle-instructions-button,
+        #controls-container button,
+        #add-token-form button,
+        #player-token-form button,
+        #background-form button {
+            width: 100%;
+            height: 36px;
+            padding: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        #background-form button {
+            width: 48%;
+        }
+
+        #dark-mode-toggle {
+            position: relative;
+            z-index: 12;
+        }
+
+        #show-controls-button {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 12;
+            padding: 10px 16px;
+            background-color: #5bc0de;
+            color: #333;
+            border-radius: 6px;
+            cursor: pointer;
+            display: none;
+            font-size: 16px;
+            border: none;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        #show-controls-button.dark-mode {
+            background-color: #337ab7;
+            color: white;
+            box-shadow: 2px 2px 5px rgba(255, 255, 255, 0.1);
+        }
+
+        #show-controls-button:hover {
+            background-color: #46b8da;
+        }
+
+        #show-controls-button.dark-mode:hover {
+            background-color: #286090;
+        }
+
+        #close-controls-button {
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            border-radius: 50%;
+            background-color: rgba(255, 0, 0, 0.7);
+            color: white;
+            cursor: pointer;
+            z-index: 13;
+            margin-left: auto;
+            align-self: flex-start;
+        }
+
+        #close-controls-button:hover {
+            background-color: rgba(255, 0, 0, 0.9);
+        }
+
+        .controls-wrapper {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 11;
+        }
+
+        .token-context-menu {
+            position: fixed;
+            z-index: 1000;
+            min-width: 140px;
+            font-size: 14px;
+        }
+
+        .token-context-menu button,
+        .token-context-menu input {
+            padding: 6px;
+            font-size: 14px;
+        }
+
+        .dm-only {
+            display: none;
+        }
+
+        body.role-dm .dm-only {
+            display: block;
+        }
+
+        .dm-controls {
+            display: block;
+        }
+
+        body.role-player .dm-controls {
+            display: none;
+        }
+
+        #loginScreen {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+            display: block;
+        }
+        #loginScreen.dark-mode {
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+        }
+        #loginScreen input,
+        #loginScreen select {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        #loginScreen.hidden {
+            display: none;
+        }
+
+        #notification {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            z-index: 1000;
+            display: none;
+            font-size: 14px;
+        }
+
+        #notification.dark-mode {
+            background: rgba(255, 255, 255, 0.8);
+            color: black;
+        }
+
+        #notification.error {
+            background: rgba(255, 0, 0, 0.8);
+        }
+
+        #notification.error.dark-mode {
+            background: rgba(255, 100, 100, 0.8);
+            color: black;
+        }
+		
+		#server-address-display {
+            margin-top: 15px;
+            padding: 8px;
+            background-color: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            font-size: 11px;
+            line-height: 1.3;
+            word-wrap: break-word; /* Ensure long addresses wrap */
+        }
+        #server-address-display.dark-mode {
+             background-color: rgba(255, 255, 255, 0.1);
+        }
+        #server-address-display strong {
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loginScreen">
+        <h3>Join Session</h3>
+        <label for="usernameInput">Username:</label>
+        <input type="text" id="usernameInput" value="User" autocomplete="username">
+        <label for="roleSelect">Role:</label>
+        <select id="roleSelect">
+            <option value="dm">DM</option>
+            <option value="player" selected>Player</option>
+        </select>
+        <button id="loginButton">Join</button>
+    </div>
+
+    <!-- Notification Area -->
+    <div id="notification"></div>
+
+    <!-- Controls -->
+    <div class="controls-wrapper" id="controls-wrapper">
+        <div id="controls-container">
+            <!-- Core Buttons -->
+            <div id="core-buttons">
+                <button id="dark-mode-toggle">Dark Mode</button>
+                <button id="interact-button">Interact</button>
+                <button id="reset-view-button">Reset View</button>
+                <button id="toggle-grid-button" class="dm-controls">Hide Grid</button>
+                <button id="draw-wall-button" class="dm-controls">Draw Walls</button>
+                <button id="erase-wall-button" class="dm-controls">Erase Walls</button>
+            </div>
+
+            <!-- Save Controls -->
+            <div id="save-controls" class="dm-controls">
+                <button id="save-state-button" class="dm-controls">Save State</button>
+                <button id="download-state-button" class="dm-controls">Download State</button>
+                <button id="import-state-button" class="dm-controls">Import State</button>
+                <input type="file" id="import-state-file" class="dm-controls" accept=".json" style="display: none;">
+            </div>
+
+            <details class="dm-controls">
+                <summary>Tokens</summary>
+                <form id="add-token-form">
+                    <label for="token-name">Token Name:</label>
+                    <input type="text" id="token-name" name="token-name" value="">
+                    <label for="token-image">Token Image URL:</label>
+                    <input type="text" id="token-image" name="token-image" value="">
+                    <label for="token-image-file">Or Upload Image:</label>
+                    <input type="file" id="token-image-file" name="token-image-file" accept="image/*">
+                    <label for="token-color">Token Color:</label>
+                    <input type="text" id="token-color" name="token-color">
+                    <label for="token-size">Token Size:</label>
+                    <select id="token-size" name="token-size">
+                        <option value="1">1x1 (Medium)</option>
+                        <option value="2">2x2 (Large)</option>
+                        <option value="3">3x3 (Huge)</option>
+                        <option value="4">4x4 (Gargantuan)</option>
+                        <option value="6">6x6 (Colossal)</option>
+                        <option value="8">8x8 (Titanic)</option>
+                    </select>
+                    <label for="token-rotation">Token Rotation (degrees):</label>
+                    <input type="number" id="token-rotation" name="token-rotation" value="0" min="0" max="360" step="1">
+                    <label for="token-max-hp" class="dm-only">Max HP:</label>
+                    <input type="number" id="token-max-hp" name="token-max-hp" class="dm-only" value="0" min="0">
+                    <label for="token-hp" class="dm-only">Current HP:</label>
+                    <input type="number" id="token-hp" name="token-hp" class="dm-only" value="0" min="0">
+                    <label for="token-init" class="dm-only">Initiative:</label>
+                    <input type="number" id="token-init" name="token-init" class="dm-only" value="0">
+                    <label for="token-ac" class="dm-only">AC:</label>
+                    <input type="number" id="token-ac" name="token-ac" class="dm-only" value="0" min="0">
+                    <label for="isMinion">Is Minion:</label>
+                    <input type="checkbox" id="isMinion" name="isMinion">
+                    <button type="submit">Add Token</button>
+                </form>
+            </details>
+
+            <details>
+                <summary>Player Tokens</summary>
+                <form id="player-token-form">
+                    <label for="player-token-name">Token Name:</label>
+                    <input type="text" id="player-token-name" name="player-token-name" value="">
+                    <label for="player-token-image">Token Image URL:</label>
+                    <input type="text" id="player-token-image" name="player-token-image" value="">
+                    <label for="player-token-image-file">Or Upload Image:</label>
+                    <input type="file" id="player-token-image-file" name="player-token-image-file" accept="image/*">
+                    <label for="player-token-color">Token Color:</label>
+                    <input type="text" id="player-token-color" name="player-token-color">
+                    <label for="player-token-size">Token Size:</label>
+                    <select id="player-token-size" name="player-token-size">
+                        <option value="1">1x1 (Medium)</option>
+                        <option value="2">2x2 (Large)</option>
+                    </select>
+                    <label for="player-token-rotation">Token Rotation (degrees):</label>
+                    <input type="number" id="player-token-rotation" name="player-token-rotation" value="0" min="0" max="360" step="1">
+                    <label for="playerIsMinion">Is Minion:</label>
+                    <input type="checkbox" id="playerIsMinion" name="playerIsMinion">
+                    <button type="submit">Add Player Token</button>
+                </form>
+            </details>
+
+            <details class="dm-controls">
+                <summary>Background</summary>
+                <form id="background-form">
+                    <label for="background-image-url">Background Image URL:</label>
+                    <input type="text" id="background-image-url" name="background-image-url">
+                    <label for="background-image-file">Or Upload Image:</label>
+                    <input type="file" id="background-image-file" name="background-image-file" accept="image/*">
+                    <div style="display: flex; gap: 4px;">
+                        <button type="button" id="load-background-button">Load BG</button>
+                        <button type="button" id="clear-background-button">Clear BG</button>
+                    </div>
+                </form>
+            </details>
+
+            <details class="dm-controls">
+                <summary>Scene Size</summary>
+                <div>
+                    <label for="grid-size-select">Scene Size:</label>
+                    <select id="grid-size-select">
+                        <option value="micro">Micro</option>
+                        <option value="small" selected>Small</option>
+                        <option value="medium">Medium</option>
+                        <option value="large">Large</option>
+                        <option value="extra-large">Extra Large</option>
+                    </select>
+                </div>
+            </details>
+
+            <details id="instructions-section">
+                <summary>Instructions</summary>
+                <div id="instructions">
+                    <p><strong>Instructions:</strong></p>
+                    <ul>
+                        <li>DM: Add tokens/background, draw walls, manage scene.</li>
+                        <li>DM: Set Max HP and Current HP for tokens; lower HP adds a red tint.</li>
+                        <li>Players: Add/move your own tokens.</li>
+                        <li>Tap/drag tokens to move (Interact mode).</li>
+                        <li>Long-press tokens to rotate (or remove/edit for DM).</li>
+                        <li>Pinch to zoom, drag to pan.</li>
+                        <li>DM: Draw/Erase Walls in respective modes.</li>
+                        <li>DM: Save state locally, download, or import for transfer.</li>
+                        <li>Reset View to center grid.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <div id="server-address-display">
+                <strong>Server Address:</strong><br>
+                <span id="lan-address-text">Checking...</span><br>
+                (Share this with others on your network)
+            </div>
+
+
+            <div id="close-controls-button">X</div>
+        </div>
+    </div>
+    <button id="show-controls-button">Show Controls</button>
+
+    <!-- Grid Container -->
+    <div id="grid-container">
+        <canvas id="grid"></canvas>
+    </div>
+
+    <!-- Socket.IO Client Library - Load Relative -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+		// Ensure the entire script runs after the DOM is ready
+		document.addEventListener('DOMContentLoaded', () => {
+			// Check if running in Electron via preload script
+			const isElectron = typeof window.electronAPI !== 'undefined';
+			console.log('isElectron:', isElectron);
+
+			let serverUrl = ''; // Will be determined dynamically
+			let socket = null; // Initialize socket variable
+			let username = null;
+			let currentRole = null;
+
+			// Suppress Autofill errors to clean up console
+			console.error = (function (originalError) {
+				return function (...args) {
+					if (typeof args[0] === 'string' && args[0].includes('Autofill')) {
+						return;
+					}
+					originalError.apply(console, args);
+				};
+			})(console.error);
+
+			// Load Socket.IO client library dynamically
+			function loadSocketIO() {
+				return new Promise((resolve, reject) => {
+					if (typeof io !== 'undefined') {
+						console.log('Socket.IO already loaded');
+						resolve();
+						return;
+					}
+
+					const socketIoUrl = `${window.location.protocol}//${window.location.host}/socket.io/socket.io.js`;
+					const script = document.createElement('script');
+					script.src = socketIoUrl;
+					script.async = true;
+					script.onload = () => {
+						console.log('Socket.IO client library loaded');
+						resolve();
+					};
+					script.onerror = () => {
+						console.error('Failed to load Socket.IO client library');
+						showNotification('Failed to load Socket.IO. Please refresh the page.', true);
+						reject(new Error('Failed to load Socket.IO'));
+					};
+					document.head.appendChild(script);
+				});
+			}
+
+			async function determineServerUrl() {
+				try {
+					await loadSocketIO(); // Ensure Socket.IO is loaded
+				} catch (error) {
+					return; // Notification already shown in loadSocketIO
+				}
+
+				if (isElectron) {
+					try {
+						const addressInfo = await window.electronAPI.getServerAddress();
+						console.log('Received address info from main:', addressInfo);
+						serverUrl = addressInfo.local || `http://localhost:2124`;
+						const lanAddressElement = document.getElementById('lan-address-text');
+						if (lanAddressElement) {
+							lanAddressElement.textContent = addressInfo.lan || 'LAN Address unavailable';
+						} else {
+							console.warn('LAN Address display element not found.');
+						}
+					} catch (error) {
+						console.error('Error getting server address from main process:', error);
+						serverUrl = `http://localhost:2124`;
+						const lanAddressElement = document.getElementById('lan-address-text');
+						if (lanAddressElement) lanAddressElement.textContent = 'Error getting LAN address';
+					}
+				} else {
+					const protocol = window.location.protocol;
+					const host = window.location.hostname || 'localhost';
+					const port = window.location.port || (protocol === 'https:' ? '443' : '80');
+					serverUrl = `${protocol}//${host}${port !== '80' && port !== '443' && port !== '' ? `:${port}` : ''}`;
+					const serverAddressDisplay = document.getElementById('server-address-display');
+					if (serverAddressDisplay) {
+						serverAddressDisplay.innerHTML = '<strong>Connected to:</strong><br>' + serverUrl;
+					}
+				}
+				console.log('Determined Server URL:', serverUrl);
+				initializeSocket(serverUrl);
+			}
+
+			function initializeSocket(url) {
+				if (typeof io === 'undefined') {
+					console.error('Socket.IO client library not loaded.');
+					showNotification('Error: Cannot connect to server (Socket.IO missing). Please reload.', true);
+					return;
+				}
+
+				console.log(`Attempting to connect to Socket.IO server at: ${url}`);
+
+				socket = io(url, {
+					reconnection: true,
+					reconnectionAttempts: 5,
+					reconnectionDelay: 1000,
+					reconnectionDelayMax: 5000,
+					timeout: 20000,
+					transports: ['websocket', 'polling'],
+					query: { clientType: isElectron ? 'electron' : 'browser' }
+				});
+
+				// Socket event handlers
+				socket.on('connect', () => {
+					console.log('Socket connected:', socket.id, 'to URL:', url);
+					showNotification('Connected to server!');
+					document.getElementById('loginButton').disabled = false;
+					document.getElementById('loginButton').textContent = 'Join';
+					initializeDarkMode();
+					resizeCanvas();
+				});
+
+				socket.on('connect_error', (err) => {
+					console.error('Socket connection error:', err.message, (err.cause ? `Cause: ${err.cause}` : ''));
+					let errorMsg = 'Connection error. Trying to reconnect...';
+					if (err.message.includes('xhr poll error') || err.message.includes('websocket error')) {
+						errorMsg = 'Network error connecting to server. Retrying...';
+					} else if (err.message === 'timeout') {
+						errorMsg = 'Connection timed out. Retrying...';
+					}
+					showNotification(errorMsg, true);
+					document.getElementById('loginButton').disabled = true;
+					document.getElementById('loginButton').textContent = 'Connecting...';
+				});
+
+				socket.on('disconnect', (reason) => {
+					console.error('Socket disconnected:', reason);
+					let msg = 'Disconnected from server.';
+					if (reason === 'io server disconnect') {
+						msg = 'Server closed the connection.';
+					} else if (reason === 'io client disconnect') {
+						msg = 'You disconnected.';
+					} else {
+						msg = 'Lost connection to server. Attempting to reconnect...';
+					}
+					if (reason !== 'io client disconnect') {
+						showNotification(msg, true);
+					}
+					document.getElementById('loginButton').disabled = true;
+					document.getElementById('loginButton').textContent = 'Disconnected';
+					document.getElementById('loginScreen').classList.remove('hidden');
+					document.body.className = '';
+				});
+
+				socket.on('reconnect', (attempt) => {
+					console.log('Reconnected to server on attempt:', attempt);
+					showNotification('Reconnected to server!');
+					if (username && currentRole) {
+						console.log('Attempting to re-login after reconnect...');
+						socket.emit('login', { username, role: currentRole });
+					} else {
+						document.getElementById('loginScreen').classList.remove('hidden');
+					}
+				});
+
+				socket.on('reconnect_attempt', (attempt) => {
+					console.log('Reconnect attempt:', attempt);
+					showNotification(`Connection attempt ${attempt}...`, false);
+					document.getElementById('loginButton').textContent = `Reconnecting (${attempt})...`;
+				});
+
+				socket.on('reconnect_failed', () => {
+					console.error('Reconnection failed after multiple attempts');
+					showNotification('Failed to reconnect. Please check the server or refresh the page.', true);
+					document.getElementById('loginButton').disabled = true;
+					document.getElementById('loginButton').textContent = 'Reconnect Failed';
+				});
+
+				socket.on('ping', () => {
+					console.log('Ping sent to server');
+				});
+
+				socket.on('pong', (latency) => {
+					console.log('Pong received, latency:', latency, 'ms');
+				});
+
+				// Game state and UI logic
+				let pendingWallChanges = {};
+				let tokensData = [];
+				let backgroundImage = null;
+				let backgroundImageUrl = '';
+				let scale = 1;
+				let panX = 0;
+				let panY = 0;
+				let walls = [];
+				let isGridVisible = true;
+				const canvas = document.getElementById('grid');
+				const ctx = canvas.getContext('2d');
+				const gridSize = 25;
+				let draggedToken = null;
+				let draggedTokenIndex = -1;
+				let offsetX, offsetY;
+				let isPanning = false;
+				let isDrawing = false;
+				let startX, startY;
+				let currentInteractionMode = 'interact';
+				let isLoading = false;
+				let hoveredTokenIndex = -1;
+				let longPressTimeout = null;
+				let longPressStartX = 0;
+				let longPressStartY = 0;
+				let isLongPressing = false;
+				let pinchStartDistance = 0;
+				let pinchStartScale = 1;
+				let pinchStartCenterX = 0;
+				let pinchStartCenterY = 0;
+				let isContextMenuOpen = false;
+				let lastDrawTime = 0;
+				let glowFrame = 0;
+				let drawPending = false;
+
+				const gridContainer = document.getElementById('grid-container');
+				const addTokenForm = document.getElementById('add-token-form');
+				const playerTokenForm = document.getElementById('player-token-form');
+				const darkModeToggle = document.getElementById('dark-mode-toggle');
+				const controlsContainer = document.getElementById('controls-container');
+				const instructionsDiv = document.getElementById('instructions');
+				const showControlsButton = document.getElementById('show-controls-button');
+				const closeControlsButton = document.getElementById('close-controls-button');
+				const controlsWrapper = document.getElementById('controls-wrapper');
+				const gridSizeSelect = document.getElementById('grid-size-select');
+				const drawWallButton = document.getElementById('draw-wall-button');
+				const eraseWallButton = document.getElementById('erase-wall-button');
+				const interactButton = document.getElementById('interact-button');
+				const toggleGridButton = document.getElementById('toggle-grid-button');
+				const resetViewButton = document.getElementById('reset-view-button');
+				const backgroundForm = document.getElementById('background-form');
+				const backgroundImageUrlInput = document.getElementById('background-image-url');
+				const backgroundImageFileInput = document.getElementById('background-image-file');
+				const loadBackgroundButton = document.getElementById('load-background-button');
+				const clearBackgroundButton = document.getElementById('clear-background-button');
+				const saveStateButton = document.getElementById('save-state-button');
+				const downloadStateButton = document.getElementById('download-state-button');
+				const importStateButton = document.getElementById('import-state-button');
+				const importStateFile = document.getElementById('import-state-file');
+				const notificationDiv = document.getElementById('notification');
+
+				const gridSizeOptions = {
+					micro: { width: 20, height: 15 },
+					small: { width: 40, height: 30 },
+					medium: { width: 70, height: 40 },
+					large: { width: 100, height: 55 },
+					'extra-large': { width: 140, height: 70 },
+				};
+
+				let currentGridWidthCells = gridSizeOptions.small.width;
+				let currentGridHeightCells = gridSizeOptions.small.height;
+
+				function showNotification(message, isError = false) {
+					notificationDiv.textContent = message;
+					notificationDiv.classList.toggle('error', isError);
+					notificationDiv.style.display = 'block';
+					setTimeout(() => {
+						notificationDiv.style.display = 'none';
+						notificationDiv.classList.remove('error');
+					}, 3000);
+				}
+
+				function normalizeWalls(wallsData, width, height) {
+					const normalized = Array(height).fill().map(() => Array(width).fill(0));
+					if (wallsData && Array.isArray(wallsData)) {
+						for (let y = 0; y < Math.min(height, wallsData.length); y++) {
+							if (wallsData[y] && Array.isArray(wallsData[y])) {
+								for (let x = 0; x < Math.min(width, wallsData[y].length); x++) {
+									normalized[y][x] = wallsData[y][x] === 1 ? 1 : 0;
+								}
+							}
+						}
+					}
+					return normalized;
+				}
+
+				function initializeDarkMode() {
+					const isDarkMode = localStorage.getItem('darkMode') === 'true';
+					document.body.classList.toggle('dark-mode', isDarkMode);
+					darkModeToggle.textContent = isDarkMode ? 'Light Mode' : 'Dark Mode';
+					updateDarkModeStyles(isDarkMode);
+					drawGrid();
+				}
+
+				function updateDarkModeStyles(isDarkMode) {
+					document.querySelectorAll('#add-token-form, #player-token-form, #background-form, #instructions, #controls-container, #loginScreen, #show-controls-button, #notification').forEach(el => {
+						el.classList.toggle('dark-mode', isDarkMode);
+					});
+					canvas.classList.toggle('dark-mode', isDarkMode);
+				}
+
+				function imageToDataUrl(file, callback) {
+					if (!file) {
+						callback(null);
+						return;
+					}
+					const reader = new FileReader();
+					reader.onload = () => callback(reader.result);
+					reader.onerror = () => {
+						console.error('Failed to read file:', file.name);
+						callback(null);
+					};
+					reader.readAsDataURL(file);
+				}
+
+				function preloadTokenImage(tokenData) {
+					if (tokenData.imageUrl) {
+						const img = new Image();
+						img.src = tokenData.imageUrl;
+						img.onload = () => {
+							tokenData.imageObj = img;
+							drawGrid();
+						};
+						img.onerror = () => {
+							console.warn(`Failed to load token image: ${tokenData.imageUrl}`);
+							tokenData.imageObj = null;
+							drawGrid();
+						};
+					} else {
+						tokenData.imageObj = null;
+					}
+				}
+
+				function resizeCanvas() {
+					canvas.width = document.documentElement.clientWidth;
+					canvas.height = document.documentElement.clientHeight;
+					drawGrid();
+				}
+
+				function loadBackgroundImage(url) {
+					if (!url) {
+						backgroundImage = null;
+						backgroundImageUrl = '';
+						drawGrid();
+						return;
+					}
+
+					const img = new Image();
+					img.onload = () => {
+						backgroundImage = img;
+						backgroundImageUrl = url;
+						if (url && !url.startsWith('data:')) {
+							backgroundImageUrlInput.value = url;
+						} else {
+							backgroundImageUrlInput.value = '';
+						}
+						drawGrid();
+					};
+					img.onerror = () => {
+						console.error(`Failed to load background image from: ${url}`);
+						showNotification('Failed to load background image.', true);
+						backgroundImage = null;
+						backgroundImageUrl = '';
+						drawGrid();
+					};
+					img.src = url;
+				}
+
+				function drawGrid() {
+					if (drawPending) return;
+					drawPending = true;
+
+					requestAnimationFrame(() => {
+						const now = performance.now();
+						if (now - lastDrawTime < 16.67) {
+							drawPending = false;
+							requestAnimationFrame(() => drawGrid());
+							return;
+						}
+						lastDrawTime = now;
+
+						glowFrame = now / 1000;
+
+						ctx.clearRect(0, 0, canvas.width, canvas.height);
+						ctx.save();
+						ctx.translate(panX, panY);
+						ctx.scale(scale, scale);
+
+						if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth !== 0) {
+							const totalGridPixelWidth = currentGridWidthCells * gridSize;
+							const totalGridPixelHeight = currentGridHeightCells * gridSize;
+							const gridAspectRatio = totalGridPixelWidth / totalGridPixelHeight;
+							const imageAspectRatio = backgroundImage.width / backgroundImage.height;
+
+							let drawWidth, drawHeight, offsetX, offsetY;
+							if (imageAspectRatio > gridAspectRatio) {
+								drawHeight = totalGridPixelHeight;
+								drawWidth = drawHeight * imageAspectRatio;
+								offsetX = (totalGridPixelWidth - drawWidth) / 2;
+								offsetY = 0;
+							} else {
+								drawWidth = totalGridPixelWidth;
+								drawHeight = drawWidth / imageAspectRatio;
+								offsetX = 0;
+								offsetY = (totalGridPixelHeight - drawHeight) / 2;
+							}
+							ctx.drawImage(backgroundImage, offsetX, offsetY, drawWidth, drawHeight);
+						}
+
+						if (isGridVisible) {
+							const gridColor = document.body.classList.contains('dark-mode') ? 'rgba(85, 85, 85, 0.7)' : 'rgba(204, 204, 204, 0.7)';
+							ctx.strokeStyle = gridColor;
+							ctx.lineWidth = 1 / scale;
+
+							for (let i = 0; i <= currentGridWidthCells; i++) {
+								const x = i * gridSize;
+								ctx.beginPath();
+								ctx.moveTo(x, 0);
+								ctx.lineTo(x, currentGridHeightCells * gridSize);
+								ctx.stroke();
+							}
+							for (let i = 0; i <= currentGridHeightCells; i++) {
+								const y = i * gridSize;
+								ctx.beginPath();
+								ctx.moveTo(0, y);
+								ctx.lineTo(currentGridWidthCells * gridSize, y);
+								ctx.stroke();
+							}
+						}
+
+						let wallColor = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
+						ctx.fillStyle = wallColor;
+						for (let y = 0; y < currentGridHeightCells; y++) {
+							for (let x = 0; x < currentGridWidthCells; x++) {
+								if (walls[y] && walls[y][x] === 1) {
+									ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+								}
+							}
+						}
+
+						tokensData.forEach((tokenData, index) => {
+							ctx.save();
+							const tokenSize = tokenData.size || 1;
+							const x = tokenData.x * gridSize;
+							const y = tokenData.y * gridSize;
+							const width = gridSize * tokenSize;
+							const height = gridSize * tokenSize;
+							const rotation = (tokenData.rotation || 0) * Math.PI / 180;
+							const isSelected = index === hoveredTokenIndex || index === draggedTokenIndex;
+							let hpPercentage = 1;
+							const isLowHealth = tokenData.maxHP > 0 && tokenData.hp / tokenData.maxHP < 0.25;
+
+							ctx.translate(x + width / 2, y + height / 2);
+							ctx.rotate(rotation);
+
+							if (isSelected || isLowHealth) {
+								const glowStrength = Math.sin(glowFrame * Math.PI * 2) * 0.2 + 0.8;
+								const sizeFactor = Math.min(1 / tokenSize, 1);
+								const glowMultiplier = 1 + sizeFactor;
+								const scaleMultiplier = 1 + sizeFactor * 0.3;
+
+								ctx.shadowColor = isSelected
+									? (document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 255, 0.5)')
+									: 'rgba(255, 0, 0, 0.5)';
+								ctx.shadowBlur = 8 * glowStrength * glowMultiplier;
+								ctx.shadowOffsetX = 0;
+								ctx.shadowOffsetY = 0;
+
+								const baseScale = 1.05 * scaleMultiplier;
+								const pulseScale = baseScale + (glowStrength * 0.03 * scaleMultiplier);
+								ctx.scale(pulseScale, pulseScale);
+							}
+
+							const drawX = -width / 2;
+							const drawY = -height / 2;
+
+							if (tokenData.maxHP > 0) {
+								hpPercentage = Math.max(0, tokenData.hp / tokenData.maxHP);
+							}
+							const redTint = 1 - hpPercentage;
+
+							if (tokenSize === 1) {
+								ctx.beginPath();
+								ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
+								ctx.clip();
+
+								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) {
+									ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height);
+								} else {
+									ctx.fillStyle = tokenData.backgroundColor || 'grey';
+									ctx.fill();
+								}
+
+								ctx.globalCompositeOperation = 'source-atop';
+								ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`;
+								ctx.beginPath();
+								ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
+								ctx.fill();
+								ctx.globalCompositeOperation = 'source-over';
+
+								if (isSelected) {
+									ctx.globalCompositeOperation = 'overlay';
+									ctx.fillStyle = 'rgba(0, 0, 255, 0.15)';
+									ctx.beginPath();
+									ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
+									ctx.fill();
+									ctx.globalCompositeOperation = 'source-over';
+
+									ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'white' : 'blue';
+									ctx.lineWidth = 1.5 / scale;
+									ctx.beginPath();
+									ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
+									ctx.stroke();
+								}
+							} else {
+								const radius = width * 0.15;
+								ctx.beginPath();
+								ctx.moveTo(drawX + radius, drawY);
+								ctx.lineTo(drawX + width - radius, drawY);
+								ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
+								ctx.lineTo(drawX + width, drawY + height - radius);
+								ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
+								ctx.lineTo(drawX + radius, drawY + height);
+								ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
+								ctx.lineTo(drawX, drawY + radius);
+								ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
+								ctx.closePath();
+
+								ctx.save();
+								ctx.clip();
+
+								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) {
+									ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height);
+								} else {
+									ctx.fillStyle = tokenData.backgroundColor || 'grey';
+									ctx.fill();
+								}
+
+								ctx.globalCompositeOperation = 'source-atop';
+								ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`;
+								ctx.fill();
+								ctx.globalCompositeOperation = 'source-over';
+
+								if (isSelected) {
+									ctx.globalCompositeOperation = 'overlay';
+									ctx.fillStyle = 'rgba(0, 0, 255, 0.15)';
+									ctx.beginPath();
+									ctx.moveTo(drawX + radius, drawY);
+									ctx.lineTo(drawX + width - radius, drawY);
+									ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
+									ctx.lineTo(drawX + width, drawY + height - radius);
+									ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
+									ctx.lineTo(drawX + radius, drawY + height);
+									ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
+									ctx.lineTo(drawX, drawY + radius);
+									ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
+									ctx.closePath();
+									ctx.fill();
+									ctx.globalCompositeOperation = 'source-over';
+								}
+
+								ctx.restore();
+
+								if (isSelected) {
+									ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'white' : 'blue';
+									ctx.lineWidth = 1.5 / scale;
+									ctx.beginPath();
+									ctx.moveTo(drawX + radius, drawY);
+									ctx.lineTo(drawX + width - radius, drawY);
+									ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
+									ctx.lineTo(drawX + width, drawY + height - radius);
+									ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
+									ctx.lineTo(drawX + radius, drawY + height);
+									ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
+									ctx.lineTo(drawX, drawY + radius);
+									ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
+									ctx.closePath();
+									ctx.stroke();
+								}
+							}
+
+							ctx.restore();
+
+							if (isSelected || isLowHealth) {
+								ctx.shadowBlur = 0;
+								ctx.shadowColor = 'transparent';
+							}
+						});
+
+						ctx.restore();
+						updateTokenNames();
+						drawPending = false;
+
+						requestAnimationFrame(drawGrid);
+					});
+				}
+
+				function updateTokenNames() {
+					document.querySelectorAll('.token-name').forEach(el => el.remove());
+
+					const zoomThreshold = 1.0;
+					if (scale < zoomThreshold && hoveredTokenIndex === -1) return;
+
+					const minDistance = 40;
+					const visibleNames = [];
+
+					if (hoveredTokenIndex !== -1) {
+						const tokenData = tokensData[hoveredTokenIndex];
+						if (tokenData.name) {
+							const tokenSize = tokenData.size || 1;
+							const canvasX = tokenData.x * gridSize + (gridSize * tokenSize) / 2;
+							const canvasY = tokenData.y * gridSize;
+							const screenX = canvasX * scale + panX;
+							const screenY = canvasY * scale + panY;
+							visibleNames.push({ index: hoveredTokenIndex, tokenData, screenX, screenY, priority: 2 });
+						}
+					}
+
+					if (scale >= zoomThreshold) {
+						if (draggedTokenIndex !== -1 && draggedTokenIndex !== hoveredTokenIndex) {
+							const tokenData = tokensData[draggedTokenIndex];
+							if (tokenData.name) {
+								const tokenSize = tokenData.size || 1;
+								const canvasX = tokenData.x * gridSize + (gridSize * tokenSize) / 2;
+								const canvasY = tokenData.y * gridSize;
+								const screenX = canvasX * scale + panX;
+								const screenY = canvasY * scale + panY;
+								visibleNames.push({ index: draggedTokenIndex, tokenData, screenX, screenY, priority: 1 });
+							}
+						}
+
+						tokensData.forEach((tokenData, index) => {
+							if (!tokenData.name || index === hoveredTokenIndex || index === draggedTokenIndex) return;
+							const tokenSize = tokenData.size || 1;
+							const canvasX = tokenData.x * gridSize + (gridSize * tokenSize) / 2;
+							const canvasY = tokenData.y * gridSize;
+							const screenX = canvasX * scale + panX;
+							const screenY = canvasY * scale + panY;
+
+							let canShow = true;
+							for (const visible of visibleNames) {
+								const dx = screenX - visible.screenX;
+								const dy = screenY - visible.screenY;
+								const distance = Math.sqrt(dx * dx + dy * dy);
+								if (distance < minDistance) {
+									canShow = false;
+									break;
+								}
+							}
+
+							if (canShow) {
+								visibleNames.push({ index, tokenData, screenX, screenY, priority: 0 });
+							}
+						});
+					}
+
+					visibleNames.forEach(({ index, tokenData, screenX, screenY }) => {
+						const nameDiv = document.createElement('div');
+						nameDiv.classList.add('token-name');
+						if (currentRole === 'dm') {
+							const hpDisplay = tokenData.maxHP > 0 ? `${tokenData.hp}/${tokenData.maxHP}` : tokenData.hp;
+							nameDiv.textContent = `${tokenData.name} (HP: ${hpDisplay}, Init: ${tokenData.initiative}, AC: ${tokenData.ac})`;
+						} else {
+							nameDiv.textContent = tokenData.name;
+						}
+						nameDiv.dataset.tokenId = tokenData.id;
+
+						nameDiv.style.left = `${screenX}px`;
+						nameDiv.style.top = `${screenY - 10}px`;
+
+						if (index === hoveredTokenIndex || index === draggedTokenIndex) {
+							nameDiv.classList.add('hovered');
+						} else {
+							nameDiv.style.opacity = '0.7';
+						}
+
+						document.body.appendChild(nameDiv);
+					});
+				}
+
+				function getTokenAtPosition(canvasX, canvasY) {
+					for (let i = tokensData.length - 1; i >= 0; i--) {
+						const tokenData = tokensData[i];
+						const tokenSize = tokenData.size || 1;
+						const tokenPixelWidth = gridSize * tokenSize;
+						const tokenPixelHeight = gridSize * tokenSize;
+						const tokenX = tokenData.x * gridSize;
+						const tokenY = tokenData.y * gridSize;
+
+						if (
+							canvasX >= tokenX &&
+							canvasX < tokenX + tokenPixelWidth &&
+							canvasY >= tokenY &&
+							canvasY < tokenY + tokenPixelHeight
+						) {
+							return { token: tokenData, index: i };
+						}
+					}
+					return null;
+				}
+
+				function handleInteractionStart(clientX, clientY) {
+					if (isLoading) return;
+
+					const rect = canvas.getBoundingClientRect();
+					const canvasX = (clientX - rect.left - panX) / scale;
+					const canvasY = (clientY - rect.top - panY) / scale;
+
+					console.log(`Interaction start at canvasX: ${canvasX}, canvasY: ${canvasY}`);
+
+					if (currentInteractionMode === 'interact') {
+						const tokenInfo = getTokenAtPosition(canvasX, canvasY);
+						if (tokenInfo && (currentRole === 'dm' || tokenInfo.token.owner === username || (tokenInfo.token.isMinion && tokenInfo.token.parentOwner === username))) {
+							draggedToken = tokenInfo.token;
+							draggedTokenIndex = tokenInfo.index;
+							const tokenSize = draggedToken.size || 1;
+							offsetX = canvasX - draggedToken.x * gridSize - (gridSize * (tokenSize - 1)) / 2;
+							offsetY = canvasY - draggedToken.y * gridSize - (gridSize * (tokenSize - 1)) / 2;
+							console.log(`Dragging token: ${draggedToken.name}, offsetX: ${offsetX}, offsetY: ${offsetY}`);
+							drawGrid();
+						} else {
+							isPanning = true;
+							startX = clientX;
+							startY = clientY;
+							console.log('Starting panning');
+						}
+					} else if (currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
+						const gridX = Math.floor(canvasX / gridSize);
+						const gridY = Math.floor(canvasY / gridSize);
+						if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
+							pendingWallChanges[`${gridY}_${gridX}`] = currentInteractionMode === 'draw' ? 1 : 0;
+							if (!walls[gridY]) walls[gridY] = [];
+							walls[gridY][gridX] = pendingWallChanges[`${gridY}_${gridX}`];
+							isDrawing = true;
+							drawGrid();
+						}
+					}
+				}
+
+				function showContextMenu(clientX, clientY, tokenIndex) {
+					document.querySelectorAll('.token-context-menu').forEach(m => m.remove());
+					isContextMenuOpen = true;
+
+					const menu = document.createElement('div');
+					menu.classList.add('token-context-menu');
+					menu.style.position = 'fixed';
+					menu.style.left = `${clientX}px`;
+					menu.style.top = `${clientY}px`;
+					menu.style.backgroundColor = document.body.classList.contains('dark-mode') ? '#222' : 'white';
+					menu.style.border = `1px solid ${document.body.classList.contains('dark-mode') ? 'white' : 'black'}`;
+					menu.style.color = document.body.classList.contains('dark-mode') ? 'white' : 'black';
+					menu.style.padding = '8px';
+					menu.style.zIndex = '1000';
+					menu.style.borderRadius = '4px';
+
+					const token = tokensData[tokenIndex];
+					if (currentRole === 'dm') {
+						menu.innerHTML = `
+							<button class="remove-token" style="width: 100%; background: #ffdddd; border: 1px solid red; padding: 6px; cursor: pointer; margin-bottom: 6px;">Remove Token</button>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">Rotate:</label>
+								<input type="number" class="rotate-input" value="${token.rotation || 0}" min="0" max="360" step="1" style="width: 60px;">
+							</div>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">Max HP:</label>
+								<input type="number" class="max-hp-input" value="${token.maxHP || 0}" min="0" style="width: 60px;">
+							</div>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">Current HP:</label>
+								<input type="number" class="hp-input" value="${token.hp || 0}" style="width: 60px;">
+							</div>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">Initiative:</label>
+								<input type="number" class="init-input" value="${token.initiative || 0}" style="width: 60px;">
+							</div>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">AC:</label>
+								<input type="number" class="ac-input" value="${token.ac || 0}" min="0" style="width: 60px;">
+							</div>
+							<div style="display: flex; gap: 6px;">
+								<button class="save-button" style="width: 50%; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
+								<button class="cancel-button" style="width: 50%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
+							</div>
+						`;
+					} else if (token.owner === username || (token.isMinion && token.parentOwner === username)) {
+						menu.innerHTML = `
+							<div style="font-size: 0.9em; padding: 6px;">${token.name}</div>
+							<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+								<label style="font-size: 0.9em;">Rotate:</label>
+								<input type="number" class="rotate-input" value="${token.rotation || 0}" min="0" max="360" step="1" style="width: 60px;">
+							</div>
+							<div style="display: flex; gap: 6px;">
+								<button class="save-button" style="width: 50%; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
+								<button class="cancel-button" style="width: 50%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
+							</div>
+						`;
+					} else {
+						menu.innerHTML = `
+							<div style="font-size: 0.9em; padding: 6px;">${token.name}</div>
+							<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Close</button>
+						`;
+					}
+
+					document.body.appendChild(menu);
+
+					const removeButton = menu.querySelector('.remove-token');
+					if (removeButton) {
+						removeButton.addEventListener('click', () => {
+							socket.emit('removeToken', token.id);
+							menu.remove();
+							isContextMenuOpen = false;
+						});
+					}
+
+					const saveButton = menu.querySelector('.save-button');
+					if (saveButton) {
+						saveButton.addEventListener('click', (e) => {
+							e.stopPropagation();
+							const rotateInput = menu.querySelector('.rotate-input');
+							let rotation = rotateInput ? parseInt(rotateInput.value, 10) % 360 : token.rotation;
+							if (isNaN(rotation)) rotation = 0;
+
+							if (currentRole === 'dm') {
+								const maxHPInput = menu.querySelector('.max-hp-input');
+								const hpInput = menu.querySelector('.hp-input');
+								const initInput = menu.querySelector('.init-input');
+								const acInput = menu.querySelector('.ac-input');
+
+								const maxHP = parseInt(maxHPInput.value, 10) || 0;
+								const hp = parseInt(hpInput.value, 10) || 0;
+								const initiative = parseInt(initInput.value, 10) || 0;
+								const ac = parseInt(acInput.value, 10) || 0;
+
+								socket.emit('updateTokenStats', { tokenId: token.id, hp, initiative, ac, maxHP });
+								socket.emit('moveToken', { tokenId: token.id, x: token.x, y: token.y, rotation });
+							} else {
+								socket.emit('moveToken', { tokenId: token.id, x: token.x, y: token.y, rotation });
+							}
+
+							menu.remove();
+							isContextMenuOpen = false;
+						});
+					}
+
+					const cancelButton = menu.querySelector('.cancel-button');
+					if (cancelButton) {
+						cancelButton.addEventListener('click', (e) => {
+							e.stopPropagation();
+							menu.remove();
+							isContextMenuOpen = false;
+						});
+					}
+
+					menu.querySelectorAll('input').forEach(input => {
+						input.addEventListener('click', (e) => e.stopPropagation());
+						input.addEventListener('keydown', (e) => {
+							if (e.key === 'Enter') {
+								saveButton.click();
+							}
+						});
+					});
+
+					function closeMenu(event) {
+						if (isContextMenuOpen && !menu.contains(event.target)) {
+							menu.remove();
+							isContextMenuOpen = false;
+							document.removeEventListener('click', closeMenu);
+							document.removeEventListener('touchstart', closeMenu);
+						}
+					}
+
+					setTimeout(() => {
+						document.addEventListener('click', closeMenu);
+						document.addEventListener('touchstart', closeMenu);
+					}, 100);
+				}
+
+				function handleLongPress(clientX, clientY) {
+					if (isLoading || currentInteractionMode !== 'interact' || isContextMenuOpen) return;
+
+					const rect = canvas.getBoundingClientRect();
+					const canvasX = (clientX - rect.left - panX) / scale;
+					const canvasY = (clientY - rect.top - panY) / scale;
+
+					const tokenInfo = getTokenAtPosition(canvasX, canvasY);
+					if (tokenInfo && (currentRole === 'dm' || tokenInfo.token.owner === username || (tokenInfo.token.isMinion && tokenInfo.token.parentOwner === username))) {
+						showContextMenu(clientX, clientY, tokenInfo.index);
+					}
+				}
+
+				function resetInteraction() {
+					if (isDrawing && Object.keys(pendingWallChanges).length > 0) {
+						socket.emit('updateWalls', walls);
+						pendingWallChanges = {};
+					}
+					draggedToken = null;
+					draggedTokenIndex = -1;
+					isPanning = false;
+					isDrawing = false;
+					isLongPressing = false;
+					if (longPressTimeout) {
+						clearTimeout(longPressTimeout);
+						longPressTimeout = null;
+					}
+					drawGrid();
+				}
+
+				addTokenForm.addEventListener('submit', (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					window.skipWallReset = true;
+
+					const nameValue = document.getElementById('token-name').value.trim();
+					const imageValue = document.getElementById('token-image').value.trim();
+					const imageFile = document.getElementById('token-image-file').files[0];
+					const colorValue = document.getElementById('token-color').value.trim();
+					const sizeValue = parseInt(document.getElementById('token-size').value, 10);
+					const rotationValue = parseInt(document.getElementById('token-rotation').value, 10) % 360;
+					const maxHPValue = parseInt(document.getElementById('token-max-hp').value, 10) || 0;
+					const hpValue = parseInt(document.getElementById('token-hp').value, 10) || 0;
+					const initValue = parseInt(document.getElementById('token-init').value, 10) || 0;
+					const acValue = parseInt(document.getElementById('token-ac').value, 10) || 0;
+					const isMinion = document.getElementById('isMinion').checked;
+
+					function submitToken(imageUrl) {
+						if (!imageUrl && !colorValue) {
+							showNotification('Please provide either an image (URL or file) or a color for the token.', true);
+							window.skipWallReset = false;
+							return;
+						}
+
+						const newTokenData = {
+							id: `token_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+							name: nameValue,
+							x: Math.floor(currentGridWidthCells / 2),
+							y: Math.floor(currentGridHeightCells / 2),
+							imageUrl: imageUrl || null,
+							imageFilename: imageFile ? imageFile.name : null,
+							backgroundColor: !imageUrl ? (colorValue || 'grey') : null,
+							size: sizeValue || 1,
+							rotation: rotationValue || 0,
+							maxHP: currentRole === 'dm' ? maxHPValue : 0,
+							hp: currentRole === 'dm' ? hpValue : 0,
+							initiative: currentRole === 'dm' ? initValue : 0,
+							ac: currentRole === 'dm' ? acValue : 0,
+							isMinion,
+							owner: username
+						};
+
+						console.log(`Adding token: ${nameValue} at x: ${newTokenData.x}, y: ${newTokenData.y}`);
+
+						try {
+							socket.emit('addToken', newTokenData);
+						} catch (err) {
+							console.error('Error emitting addToken:', err);
+							showNotification('Failed to add token. Please try again.', true);
+						}
+
+						document.getElementById('token-name').value = '';
+						document.getElementById('token-image').value = '';
+						document.getElementById('token-image-file').value = '';
+						document.getElementById('token-color').value = '';
+						document.getElementById('token-size').value = '1';
+						document.getElementById('token-rotation').value = '0';
+						document.getElementById('token-max-hp').value = '0';
+						document.getElementById('token-hp').value = '0';
+						document.getElementById('token-init').value = '0';
+						document.getElementById('token-ac').value = '0';
+						document.getElementById('isMinion').checked = false;
+
+						window.skipWallReset = false;
+					}
+
+					if (imageFile) {
+						imageToDataUrl(imageFile, (dataUrl) => {
+							submitToken(dataUrl);
+						});
+					} else {
+						submitToken(imageValue);
+					}
+				});
+
+				playerTokenForm.addEventListener('submit', (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					window.skipWallReset = true;
+
+					const nameValue = document.getElementById('player-token-name').value.trim();
+					const imageValue = document.getElementById('player-token-image').value.trim();
+					const imageFile = document.getElementById('player-token-image-file').files[0];
+					const colorValue = document.getElementById('player-token-color').value.trim();
+					const sizeValue = parseInt(document.getElementById('player-token-size').value, 10);
+					const rotationValue = parseInt(document.getElementById('player-token-rotation').value, 10) % 360;
+					const isMinion = document.getElementById('playerIsMinion').checked;
+
+					function submitPlayerToken(imageUrl) {
+						if (!imageUrl && !colorValue) {
+							showNotification('Please provide either an image (URL or file) or a color for the token.', true);
+							window.skipWallReset = false;
+							return;
+						}
+
+						const newTokenData = {
+							id: `token_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+							name: nameValue,
+							x: Math.floor(currentGridWidthCells / 2),
+							y: Math.floor(currentGridHeightCells / 2),
+							imageUrl: imageUrl || null,
+							imageFilename: imageFile ? imageFile.name : null,
+							backgroundColor: !imageUrl ? (colorValue || 'grey') : null,
+							size: sizeValue || 1,
+							rotation: rotationValue || 0,
+							maxHP: 0,
+							hp: 0,
+							initiative: 0,
+							ac: 0,
+							isMinion,
+							owner: username
+						};
+
+						console.log(`Adding player token: ${nameValue} at x: ${newTokenData.x}, y: ${newTokenData.y}`);
+
+						try {
+							socket.emit('addToken', newTokenData);
+						} catch (err) {
+							console.error('Error emitting addToken:', err);
+							showNotification('Failed to add token. Please try again.', true);
+						}
+
+						document.getElementById('player-token-name').value = '';
+						document.getElementById('player-token-image').value = '';
+						document.getElementById('player-token-image-file').value = '';
+						document.getElementById('player-token-color').value = '';
+						document.getElementById('player-token-size').value = '1';
+						document.getElementById('player-token-rotation').value = '0';
+						document.getElementById('playerIsMinion').checked = false;
+
+						window.skipWallReset = false;
+					}
+
+					if (imageFile) {
+						imageToDataUrl(imageFile, (dataUrl) => {
+							submitPlayerToken(dataUrl);
+						});
+					} else {
+						submitPlayerToken(imageValue);
+					}
+				});
+
+				darkModeToggle.addEventListener('click', () => {
+					const isDarkMode = !document.body.classList.contains('dark-mode');
+					document.body.classList.toggle('dark-mode', isDarkMode);
+					darkModeToggle.textContent = isDarkMode ? 'Light Mode' : 'Dark Mode';
+					localStorage.setItem('darkMode', isDarkMode);
+					updateDarkModeStyles(isDarkMode);
+					drawGrid();
+				});
+
+				showControlsButton.addEventListener('click', () => {
+					controlsWrapper.style.display = 'block';
+					showControlsButton.style.display = 'none';
+				});
+
+				closeControlsButton.addEventListener('click', () => {
+					controlsWrapper.style.display = 'none';
+					showControlsButton.style.display = 'block';
+				});
+
+				gridSizeSelect.addEventListener('change', () => {
+					if (currentRole !== 'dm') return;
+					const sizeKey = gridSizeSelect.value;
+					currentGridWidthCells = gridSizeOptions[sizeKey].width;
+					currentGridHeightCells = gridSizeOptions[sizeKey].height;
+
+					walls = normalizeWalls(walls, currentGridWidthCells, currentGridHeightCells);
+					socket.emit('updateWalls', walls);
+					socket.emit('updateGridSize', { width: currentGridWidthCells, height: currentGridHeightCells });
+
+					tokensData.forEach(token => {
+						token.x = Math.min(token.x, currentGridWidthCells - (token.size || 1));
+						token.y = Math.min(token.y, currentGridHeightCells - (token.size || 1));
+						socket.emit('moveToken', { tokenId: token.id, x: token.x, y: token.y, rotation: token.rotation });
+					});
+
+					drawGrid();
+				});
+
+				drawWallButton.addEventListener('click', () => {
+					currentInteractionMode = 'draw';
+					drawWallButton.style.backgroundColor = '#5bc0de';
+					eraseWallButton.style.backgroundColor = '';
+					interactButton.style.backgroundColor = '';
+				});
+
+				eraseWallButton.addEventListener('click', () => {
+					currentInteractionMode = 'erase';
+					eraseWallButton.style.backgroundColor = '#5bc0de';
+					drawWallButton.style.backgroundColor = '';
+					interactButton.style.backgroundColor = '';
+				});
+
+				interactButton.addEventListener('click', () => {
+					currentInteractionMode = 'interact';
+					interactButton.style.backgroundColor = '#5bc0de';
+					drawWallButton.style.backgroundColor = '';
+					eraseWallButton.style.backgroundColor = '';
+				});
+
+				toggleGridButton.addEventListener('click', () => {
+					if (currentRole === 'dm') {
+						socket.emit('updateGridVisibility', !isGridVisible);
+					}
+				});
+
+				resetViewButton.addEventListener('click', () => {
+					scale = 1;
+					panX = (canvas.width - currentGridWidthCells * gridSize) / 2;
+					panY = (canvas.height - currentGridHeightCells * gridSize) / 2;
+					drawGrid();
+				});
+
+				loadBackgroundButton.addEventListener('click', () => {
+					const url = backgroundImageUrlInput.value.trim();
+					if (url) {
+						socket.emit('updateBackground', url);
+					}
+				});
+
+				clearBackgroundButton.addEventListener('click', () => {
+					socket.emit('updateBackground', '');
+				});
+
+				backgroundImageFileInput.addEventListener('change', () => {
+					const file = backgroundImageFileInput.files[0];
+					if (file) {
+						imageToDataUrl(file, (dataUrl) => {
+							if (dataUrl) {
+								socket.emit('updateBackground', dataUrl);
+							}
+						});
+					}
+				});
+
+				saveStateButton.addEventListener('click', () => {
+					socket.emit('saveState');
+					showNotification('State saved.');
+				});
+
+				downloadStateButton.addEventListener('click', () => {
+					const state = {
+						tokens: tokensData,
+						walls: normalizeWalls(walls, currentGridWidthCells, currentGridHeightCells),
+						backgroundImageUrl,
+						gridSize: { width: currentGridWidthCells, height: currentGridHeightCells }
+					};
+					const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+					const url = URL.createObjectURL(blob);
+					const a = document.createElement('a');
+					a.href = url;
+					a.download = 'grid-state.json';
+					a.click();
+					URL.revokeObjectURL(url);
+					showNotification('State downloaded.');
+				});
+
+				importStateButton.addEventListener('click', () => {
+					importStateFile.click();
+				});
+
+				importStateFile.addEventListener('change', () => {
+					const file = importStateFile.files[0];
+					if (file) {
+						const reader = new FileReader();
+						reader.onload = (e) => {
+							try {
+								const state = JSON.parse(e.target.result);
+								socket.emit('importState', state);
+								showNotification('State imported.');
+							} catch (err) {
+								console.error('Failed to parse imported state:', err);
+								showNotification('Failed to import state.', true);
+							}
+						};
+						reader.onerror = () => {
+							console.error('Failed to read file:', file.name);
+							showNotification('Failed to read file.', true);
+						};
+						reader.readAsText(file);
+						importStateFile.value = '';
+					}
+				});
+
+				canvas.addEventListener('mousedown', (event) => {
+					if (event.button === 0) {
+						handleInteractionStart(event.clientX, event.clientY);
+					}
+				});
+
+				canvas.addEventListener('contextmenu', (event) => {
+					event.preventDefault();
+					if (isLoading || currentInteractionMode !== 'interact' || isContextMenuOpen) return;
+
+					const rect = canvas.getBoundingClientRect();
+					const canvasX = (event.clientX - rect.left - panX) / scale;
+					const canvasY = (event.clientY - rect.top - panY) / scale;
+
+					const tokenInfo = getTokenAtPosition(canvasX, canvasY);
+					if (tokenInfo && (currentRole === 'dm' || tokenInfo.token.owner === username || (tokenInfo.token.isMinion && tokenInfo.token.parentOwner === username))) {
+						showContextMenu(event.clientX, event.clientY, tokenInfo.index);
+					}
+				});
+
+				canvas.addEventListener('mousemove', (event) => {
+					const rect = canvas.getBoundingClientRect();
+					const canvasX = (event.clientX - rect.left - panX) / scale;
+					const canvasY = (event.clientY - rect.top - panY) / scale;
+
+					if (draggedToken) {
+						const tokenSize = draggedToken.size || 1;
+						const newX = Math.floor((canvasX - offsetX) / gridSize);
+						const newY = Math.floor((canvasY - offsetY) / gridSize);
+						const maxX = currentGridWidthCells - tokenSize;
+						const maxY = currentGridHeightCells - tokenSize;
+						const oldX = draggedToken.x;
+						const oldY = draggedToken.y;
+						draggedToken.x = Math.max(0, Math.min(newX, maxX));
+						draggedToken.y = Math.max(0, Math.min(newY, maxY));
+						if (draggedToken.x !== oldX || draggedToken.y !== oldY) {
+							console.log(`Moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`);
+							socket.emit('moveToken', {
+								tokenId: draggedToken.id,
+								x: draggedToken.x,
+								y: draggedToken.y,
+								rotation: draggedToken.rotation
+							});
+						}
+						drawGrid();
+					} else if (isPanning) {
+						panX += event.clientX - startX;
+						panY += event.clientY - startY;
+						startX = event.clientX;
+						startY = event.clientY;
+						drawGrid();
+					} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
+						const gridX = Math.floor(canvasX / gridSize);
+						const gridY = Math.floor(canvasY / gridSize);
+						if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
+							pendingWallChanges[`${gridY}_${gridX}`] = currentInteractionMode === 'draw' ? 1 : 0;
+							if (!walls[gridY]) walls[gridY] = [];
+							walls[gridY][gridX] = pendingWallChanges[`${gridY}_${gridX}`];
+							drawGrid();
+						}
+					} else {
+						const tokenInfo = getTokenAtPosition(canvasX, canvasY);
+						const newHoveredIndex = tokenInfo ? tokenInfo.index : -1;
+						if (newHoveredIndex !== hoveredTokenIndex) {
+							hoveredTokenIndex = newHoveredIndex;
+							drawGrid();
+						}
+					}
+				});
+
+				canvas.addEventListener('mouseup', () => {
+					resetInteraction();
+				});
+
+				canvas.addEventListener('mouseleave', () => {
+					resetInteraction();
+					hoveredTokenIndex = -1;
+					drawGrid();
+				});
+
+				canvas.addEventListener('touchstart', (event) => {
+					event.preventDefault();
+					if (event.touches.length === 1) {
+						const touch = event.touches[0];
+						handleInteractionStart(touch.clientX, touch.clientY);
+						longPressStartX = touch.clientX;
+						longPressStartY = touch.clientY;
+						longPressTimeout = setTimeout(() => {
+							isLongPressing = true;
+							handleLongPress(longPressStartX, longPressStartY);
+						}, 500);
+					} else if (event.touches.length === 2) {
+						resetInteraction();
+						const touch1 = event.touches[0];
+						const touch2 = event.touches[1];
+						pinchStartDistance = Math.hypot(
+							touch1.clientX - touch2.clientX,
+							touch1.clientY - touch2.clientY
+						);
+						pinchStartScale = scale;
+						pinchStartCenterX = (touch1.clientX + touch2.clientX) / 2;
+						pinchStartCenterY = (touch1.clientY + touch2.clientY) / 2;
+					}
+				});
+
+				canvas.addEventListener('touchmove', (event) => {
+					event.preventDefault();
+					const rect = canvas.getBoundingClientRect();
+					if (event.touches.length === 1 && !isLongPressing) {
+						const touch = event.touches[0];
+						const canvasX = (touch.clientX - rect.left - panX) / scale;
+						const canvasY = (touch.clientY - rect.top - panY) / scale;
+
+						if (draggedToken) {
+							const tokenSize = draggedToken.size || 1;
+							const newX = Math.floor((canvasX - offsetX) / gridSize);
+							const newY = Math.floor((canvasY - offsetY) / gridSize);
+							const maxX = currentGridWidthCells - tokenSize;
+							const maxY = currentGridHeightCells - tokenSize;
+							const oldX = draggedToken.x;
+							const oldY = draggedToken.y;
+							draggedToken.x = Math.max(0, Math.min(newX, maxX));
+							draggedToken.y = Math.max(0, Math.min(newY, maxY));
+							if (draggedToken.x !== oldX || draggedToken.y !== oldY) {
+								console.log(`Touch moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`);
+								socket.emit('moveToken', {
+									tokenId: draggedToken.id,
+									x: draggedToken.x,
+									y: draggedToken.y,
+									rotation: draggedToken.rotation
+								});
+							}
+							drawGrid();
+						} else if (isPanning) {
+							panX += touch.clientX - startX;
+							panY += touch.clientY - startY;
+							startX = touch.clientX;
+							startY = touch.clientY;
+							drawGrid();
+						} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
+							const gridX = Math.floor(canvasX / gridSize);
+							const gridY = Math.floor(canvasY / gridSize);
+							if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
+								pendingWallChanges[`${gridY}_${gridX}`] = currentInteractionMode === 'draw' ? 1 : 0;
+								if (!walls[gridY]) walls[gridY] = [];
+								walls[gridY][gridX] = pendingWallChanges[`${gridY}_${gridX}`];
+								drawGrid();
+							}
+						}
+					} else if (event.touches.length === 2) {
+						const touch1 = event.touches[0];
+						const touch2 = event.touches[1];
+						const newDistance = Math.hypot(
+							touch1.clientX - touch2.clientX,
+							touch1.clientY - touch2.clientY
+						);
+						const newCenterX = (touch1.clientX + touch2.clientX) / 2;
+						const newCenterY = (touch1.clientY + touch2.clientY) / 2;
+
+						const scaleFactor = newDistance / pinchStartDistance;
+						const newScale = pinchStartScale * scaleFactor;
+						scale = Math.max(0.5, Math.min(newScale, 5));
+
+						const canvasCenterX = (newCenterX - rect.left - panX) / pinchStartScale;
+						const canvasCenterY = (newCenterY - rect.top - panY) / pinchStartScale;
+						panX += canvasCenterX * pinchStartScale - canvasCenterX * scale;
+						panY += canvasCenterY * pinchStartScale - canvasCenterY * scale;
+
+						pinchStartDistance = newDistance;
+						pinchStartScale = scale;
+						pinchStartCenterX = newCenterX;
+						pinchStartCenterY = newCenterY;
+
+						drawGrid();
+					}
+				});
+
+				canvas.addEventListener('touchend', () => {
+					resetInteraction();
+				});
+
+				canvas.addEventListener('touchcancel', () => {
+					resetInteraction();
+				});
+
+				canvas.addEventListener('wheel', (event) => {
+					event.preventDefault();
+					const rect = canvas.getBoundingClientRect();
+					const mouseX = event.clientX - rect.left;
+					const mouseY = event.clientY - rect.top;
+
+					const zoomSpeed = 0.001;
+					const zoomFactor = event.deltaY < 0 ? 1 + zoomSpeed * Math.abs(event.deltaY) : 1 / (1 + zoomSpeed * Math.abs(event.deltaY));
+
+					const canvasX = (mouseX - panX) / scale;
+					const canvasY = (mouseY - panY) / scale;
+
+					const newScale = scale * zoomFactor;
+					scale = Math.max(0.5, Math.min(newScale, 5));
+
+					panX = mouseX - canvasX * scale;
+					panY = mouseY - canvasY * scale;
+
+					drawGrid();
+				});
+
+				window.addEventListener('resize', resizeCanvas);
+
+				// Login handler
+				document.getElementById('loginButton').addEventListener('click', () => {
+					username = document.getElementById('usernameInput').value.trim();
+					currentRole = document.getElementById('roleSelect').value;
+					if (!username) {
+						showNotification('Please enter a username.', true);
+						return;
+					}
+					if (!socket || !socket.connected) {
+						showNotification('Not connected to server. Cannot login.', true);
+						return;
+					}
+					console.log(`Attempting login as ${username} (${currentRole})`);
+					socket.emit('login', { username, role: currentRole });
+				});
+
+				socket.on('roleAssigned', ({ role, username: assignedUsername }) => {
+					console.log(`Role assigned by server: ${role}, Username: ${assignedUsername}`);
+					currentRole = role;
+					username = assignedUsername;
+					document.getElementById('loginScreen').classList.add('hidden');
+					document.body.classList.add(`role-${currentRole}`);
+					updateDarkModeStyles(document.body.classList.contains('dark-mode'));
+					showNotification(`Logged in as ${username} (${role})`);
+				});
+
+				socket.on('init', (data) => {
+					isLoading = true;
+					tokensData = (data.tokens || []).map(token => ({
+						...token,
+						x: Number.isFinite(token.x) ? token.x : Math.floor(currentGridWidthCells / 2),
+						y: Number.isFinite(token.y) ? token.y : Math.floor(currentGridHeightCells / 2)
+					}));
+					console.log('Initialized tokens:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y })));
+					walls = normalizeWalls(data.walls, data.gridSize.width, data.gridSize.height);
+					backgroundImageUrl = data.backgroundImageUrl || '';
+					currentGridWidthCells = data.gridSize.width || gridSizeOptions.small.width;
+					currentGridHeightCells = data.gridSize.height || gridSizeOptions.small.height;
+					scale = data.scale || 1;
+					panX = data.panX || 0;
+					panY = data.panY || 0;
+					isGridVisible = data.isGridVisible !== undefined ? data.isGridVisible : true;
+					gridSizeSelect.value = Object.keys(gridSizeOptions).find(
+						key => gridSizeOptions[key].width === currentGridWidthCells &&
+							   gridSizeOptions[key].height === currentGridHeightCells
+					) || 'small';
+					toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+					tokensData.forEach(preloadTokenImage);
+					loadBackgroundImage(backgroundImageUrl);
+					resizeCanvas();
+					isLoading = false;
+					drawGrid();
+				});
+
+				socket.on('updateTokens', (tokens) => {
+					tokensData = tokens.map(token => ({
+						...token,
+						x: Number.isFinite(token.x) ? token.x : Math.floor(currentGridWidthCells / 2),
+						y: Number.isFinite(token.y) ? token.y : Math.floor(currentGridWidthCells / 2)
+					}));
+					console.log('Updated tokens:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y })));
+					tokensData.forEach(preloadTokenImage);
+					drawGrid();
+				});
+
+				socket.on('updateWalls', (newWalls) => {
+					if (!window.skipWallReset) {
+						walls = newWalls;
+						drawGrid();
+					}
+				});
+
+				socket.on('updateGridVisibility', (newIsGridVisible) => {
+					isGridVisible = newIsGridVisible;
+					if (currentRole === 'dm') {
+						toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+					}
+					drawGrid();
+				});
+
+				socket.on('updateBackground', (url) => {
+					loadBackgroundImage(url);
+				});
+
+				socket.on('updateGridSize', (gridSize) => {
+					currentGridWidthCells = gridSize.width;
+					currentGridHeightCells = gridSize.height;
+					gridSizeSelect.value = Object.keys(gridSizeOptions).find(
+						key => gridSizeOptions[key].width === currentGridWidthCells &&
+							   gridSizeOptions[key].height === currentGridHeightCells
+					) || 'small';
+					drawGrid();
+				});
+
+				socket.on('error', (message) => {
+					showNotification(message, true);
+					if (message === 'Username already in use') {
+						document.getElementById('loginScreen').classList.remove('hidden');
+						document.body.classList.remove(`role-${currentRole}`);
+						currentRole = null;
+						username = null;
+					}
+				});
+
+				socket.on('saveSuccess', (message) => {
+					showNotification(message);
+				});
+
+				socket.on('clients', (clientIds) => {
+					console.log('Connected clients:', clientIds);
+				});
+
+				socket.on('importState', (state) => {
+					tokensData = state.tokens || [];
+					walls = normalizeWalls(state.walls, state.gridSize.width, state.gridSize.height);
+					backgroundImageUrl = state.backgroundImageUrl || '';
+					currentGridWidthCells = state.gridSize?.width || gridSizeOptions.small.width;
+					currentGridHeightCells = state.gridSize?.height || gridSizeOptions.small.height;
+					scale = state.scale || 1;
+					panX = state.panX || 0;
+					panY = state.panY || 0;
+					isGridVisible = state.isGridVisible !== undefined ? state.isGridVisible : true;
+					gridSizeSelect.value = Object.keys(gridSizeOptions).find(
+						key => gridSizeOptions[key].width === currentGridWidthCells &&
+							   gridSizeOptions[key].height === currentGridHeightCells
+					) || 'small';
+					toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+					tokensData.forEach(preloadTokenImage);
+					loadBackgroundImage(backgroundImageUrl);
+					drawGrid();
+				});
+			}
+
+			// Start the process
+			determineServerUrl();
+		});
+	</script>
+	</body>
+</html>
