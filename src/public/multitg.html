@@ -476,14 +476,19 @@
             <details class="dm-controls">
                 <summary>Scene Size</summary>
                 <div>
-                    <label for="grid-size-select">Scene Size:</label>
-                    <select id="grid-size-select">
-                        <option value="micro">Micro</option>
-                        <option value="small" selected>Small</option>
-                        <option value="medium">Medium</option>
-                        <option value="large">Large</option>
-                        <option value="extra-large">Extra Large</option>
-                    </select>
+                    <label for="grid-size-select">Scene Size:</label>      
+					<select id="grid-size-select">
+						<option value="micro">Micro (20x15)</option>
+						<option value="small" selected>Small (40x30)</option>
+						<option value="medium">Medium (70x40)</option>
+						<option value="large">Large (100x55)</option>
+						<option value="extra-large">Extra Large (140x70)</option>
+						<option value="small-portrait">Small Portrait (30x40)</option> // Add this
+						<option value="medium-portrait">Medium Portrait (40x70)</option> // Add this
+						<option value="large-portrait">Large Portrait (55x100)</option> // Add this
+						<option value="extra-large-portrait">Extra Large Portrait (70x140)</option> // Add this
+					</select>
+						
                 </div>
             </details>
 
@@ -771,6 +776,11 @@
 					medium: { width: 70, height: 40 },
 					large: { width: 100, height: 55 },
 					'extra-large': { width: 140, height: 70 },
+					// Add portrait options:
+					'small-portrait': { width: 30, height: 40 }, // Portrait
+					'medium-portrait': { width: 40, height: 70 },
+					'large-portrait': { width: 55, height: 100 },
+					'extra-large-portrait': { width: 70, height: 140 },
 				};
 
 				let currentGridWidthCells = gridSizeOptions.small.width;
