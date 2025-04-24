@@ -1,4 +1,10 @@
 // c:\thorgrid-electron\main.js
+
+// Check for squirrel events first.
+// If this returns true, the module handles squirrel events and exits the app gracefully.
+// No further main process logic needs to run in this case.
+if (require('electron-squirrel-startup')) return;
+
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
