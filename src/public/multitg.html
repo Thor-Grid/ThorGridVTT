@@ -1833,7 +1833,7 @@
 					}
 				}
 
-				// --- Context Menu Logic ---
+								// --- Context Menu Logic ---
 				function showContextMenu(clientX, clientY, tokenIndex) {
 					// Remove any existing context menus
 					document.querySelectorAll('.token-context-menu').forEach(m => m.remove());
@@ -1873,11 +1873,12 @@
 
 
 					// Build menu content based on role and token ownership
-					let menuHTML = `<div style="font-weight: bold; margin-bottom: 2px; text-align: center;">${token.name}</div>`; // Center the name
+					// Start with the token name
+					let menuHTML = `<div style="font-weight: bold; margin-bottom: 2px; text-align: center;">${token.name}</div>`;
 
-
-					// --- Add DM-only editable options ---
+					// --- Add role-specific content inputs/displays ---
 					if (currentRole === 'dm') {
+						// Add all DM controls (remove button, editable inputs for rotate, sight, light, hp, init, ac)
 						menuHTML += `
 							<button class="remove-token" style="width: 100%; background: #ffdddd; border: 1px solid red; padding: 6px; cursor: pointer;">Remove Token</button>
 							<div style="display: flex; align-items: center; gap: 6px;">
@@ -1919,17 +1920,9 @@
 								<input type="number" class="ac-input" value="${token.ac || 0}" min="0" style="flex-grow: 1; padding: 4px;">
 							</div>
 						`;
-                         // DM always gets Save/Cancel if they can edit stats/remove token
-                         // Simplified condition: if DM, always add save/cancel
-                         menuHTML += `
-                            <div style="display: flex; gap: 6px; margin-top: 4px;">
-                                <button class="save-button" style="flex-grow: 1; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
-                                <button class="cancel-button" style="flex-grow: 1; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
-                            </div>
-                         `;
 
 					} else if (token.owner === username || (token.isMinion && token.parentOwner === username)) {
-						// Player owns token - can only rotate by default
+						// Player owns token - Add player-editable fields (Rotate) and viewable (Sight, Light)
 						menuHTML += `
 							<div style="display: flex; align-items: center; gap: 6px;">
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Rotate:</label>
@@ -1943,140 +1936,182 @@
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
                                  <div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 							</div>
+                            <!-- Optional: Add player-editable HP/Init here if desired -->
+                             <!--
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Cur HP:</label>
+                                <input type="number" class="hp-input" value="${token.hp || 0}" min="0" style="flex-grow: 1; padding: 4px;">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
+                                <input type="number" class="init-input" value="${token.initiative || 0}" style="flex-grow: 1; padding: 4px;">
+                            </div>
+                            -->
 						`;
-                         // Player gets Save/Cancel if they can edit any field (currently just rotate input exists for player owners)
-                         if (menu.querySelector('.rotate-input')) { // Check specifically for the editable field
-                              menuHTML += `
-                                 <div style="display: flex; gap: 6px; margin-top: 4px;">
-                                     <button class="save-button" style="flex-grow: 1; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
-                                     <button class="cancel-button" style="flex-grow: 1; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
-                                 </div>
-                              `;
-                         } else { // Fallback to close if somehow no editable fields exist
-                              menuHTML += `<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer; margin-top: 4px;">Close</button>`;
-                         }
 
 					} else {
-                        // Player does not own token - just show name and ownership status
-                        // FIXED: Removed Init and AC display for non-owned tokens in context menu
+                        // Player does not own token - Add read-only info
                         menuHTML += `
                             <div style="font-size: 0.9em; padding: 6px; text-align: center;">(You don't own this token)</div>
                              <div style="display: flex; align-items: center; gap: 6px;">
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
                                  <div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 							</div>
+                            <!-- Optional: Add read-only displays for HP/Init/AC here if needed for non-owned -->
+                             <!--
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">HP:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.maxHP > 0 && token.hp !== undefined ? `${token.hp}/${token.maxHP}` : (token.hp !== undefined ? token.hp : '--/--')}</div>
+                             </div>
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.initiative !== undefined ? token.initiative : '--'}</div>
+                             </div>
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
+                             </div>
+                             -->
                         `;
-                         // Always add a Close button
-                         menuHTML += `<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer; margin-top: 4px;">Close</button>`;
-
                     }
 
-					menu.innerHTML = menuHTML;
-					document.body.appendChild(menu);
+                    // --- Now add the buttons using correct JavaScript conditionals ---
+                    // This block correctly appends the appropriate buttons AFTER the content HTML
+                    if (currentRole === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username)) {
+                         // If user is DM OR owns the token (or its minion), add Save and Cancel buttons
+                         menuHTML += `
+                            <div style="display: flex; gap: 6px; margin-top: 4px;">
+                                <button class="save-button" style="flex-grow: 1; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
+                                <button class="cancel-button" style="flex-grow: 1; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
+                            </div>
+                         `;
+                    } else {
+                         // Otherwise (user is a player and *doesn't* own the token), add only the Close button
+                         menuHTML += `<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer; margin-top: 4px;">Close</button>`;
+                    }
 
 
-					// Estimate menu size after content is added
+					menu.innerHTML = menuHTML; // Assign the final built HTML string to the menu element
+					document.body.appendChild(menu); // Append the menu to the document
+
+
+					// --- Attach Event Listeners (MUST query elements *after* innerHTML is set) ---
+
+					// Positioning logic (Your original positioning logic seems correct)
 					const menuWidthActual = menu.offsetWidth;
 					const menuHeightActual = menu.offsetHeight;
-
-                    // Re-adjust position based on actual size and window bounds
                     menuX = clientX;
 					menuY = clientY;
-
-                    if (menuX + menuWidthActual > window.innerWidth - 10) { // 10px padding from right edge
-                        menuX = window.innerWidth - menuWidthActual - 10;
-                    }
-                     if (menuY + menuHeightActual > window.innerHeight - 10) { // 10px padding from bottom edge
-                        menuY = window.innerHeight - menuHeightActual - 10;
-                    }
-                    // Ensure it doesn't go negative (minimum 10px from top/left)
-                    menuX = Math.max(10, menuX);
+                    if (menuX + menuWidthActual > window.innerWidth - 10) { menuX = window.innerWidth - menuWidthActual - 10; }
+                    if (menuY + menuHeightActual > window.innerHeight - 10) { menuY = window.innerHeight - menuHeightActual - 10; }
+                    menuX = Math.max(10, menuX); // Ensure min 10px from left/top
                     menuY = Math.max(10, menuY);
-
 					menu.style.left = `${menuX}px`;
 					menu.style.top = `${menuY}px`;
 
 
-                    // Add listener for Light Source checkbox to show/hide range inputs
-					// Query elements once after the menu HTML is added
+                    // Add listener for Light Source checkbox to show/hide range inputs (DM only)
 					const lightSourceCheckbox = menu.querySelector('.light-source-checkbox');
 					const lightRangeInputsDiv = menu.querySelector('.light-range-inputs');
-
-					// Add the listener only if the elements were found (meaning it's a DM context menu)
+					// This check implicitly only runs for DM menus because only DM menus have the checkbox/div
 					if (lightSourceCheckbox && lightRangeInputsDiv) {
 						lightSourceCheckbox.addEventListener('change', () => {
-							// Use the correct variable name
 							lightRangeInputsDiv.style.display = lightSourceCheckbox.checked ? 'flex' : 'none';
 						});
-						// Initial display state is already handled by the menuHTML generation
-						// e.g., <div style="display: ${token.isLightSource ? 'flex' : 'none'}; ...>
+						// No need to set initial state here, it's set in the menuHTML string based on token data
 					}
 
 
+                    // Listener for the Remove button (DM only)
 					const removeButton = menu.querySelector('.remove-token');
-					if (removeButton) {
+					if (removeButton) { // This implicitly checks for DM role
 						removeButton.addEventListener('click', (e) => {
-                            e.stopPropagation(); // Prevent click from bubbling and closing menu immediately
+                            e.stopPropagation();
 							socket.emit('removeToken', token.id);
 							menu.remove();
 							isContextMenuOpen = false;
 						});
 					}
 
-					const saveButton = menu.querySelector('.save-button');
+                    // Listener for the Save button (DM or Player Owner)
+										const saveButton = menu.querySelector('.save-button');
 					if (saveButton) {
 						saveButton.addEventListener('click', (e) => {
 							e.stopPropagation(); // Prevent click from bubbling and closing menu immediately
 
+                            // Always query the rotate input, as it appears in both DM and Player menus
 							const rotateInput = menu.querySelector('.rotate-input');
 							let rotation = rotateInput ? parseInt(rotateInput.value, 10) % 360 : token.rotation;
 							if (isNaN(rotation)) rotation = token.rotation || 0;
 
+							// Start building the update object - always include tokenId and rotation
+							let statsToUpdate = { tokenId: token.id, rotation: rotation };
 
-							let statsToUpdate = { tokenId: token.id, rotation: rotation }; // Include rotation in stats update
+                            // Query for other potential inputs ONLY if they might exist in the menu
+                            // These queries must happen *inside* the click listener because the menu is created dynamically
+                            const maxHPInput = menu.querySelector('.max-hp-input');       // Only in DM menu HTML
+                            const hpInput = menu.querySelector('.hp-input');             // Only in DM menu HTML (unless uncommented for player)
+                            const initInput = menu.querySelector('.init-input');           // Only in DM menu HTML (unless uncommented for player)
+                            const acInput = menu.querySelector('.ac-input');             // Only in DM menu HTML
+                            const sightInput = menu.querySelector('.sight-input');         // Only in DM menu HTML
+                            const lightSourceCheckbox = menu.querySelector('.light-source-checkbox'); // Only in DM menu HTML
+                            const brightRangeInput = menu.querySelector('.bright-range-input'); // Only in DM menu HTML
+                            const dimRangeInput = menu.querySelector('.dim-range-input');       // Only in DM menu HTML (corrected typo .dim-range-inputs -> .dim-range-input)
 
 
+							// Only include DM-specific fields if the user is a DM
 							if (currentRole === 'dm') {
-								const maxHPInput = menu.querySelector('.max-hp-input');
-								const hpInput = menu.querySelector('.hp-input');
-								const initInput = menu.querySelector('.init-input');
-								const acInput = menu.querySelector('.ac-input');
-                                const sightInput = menu.querySelector('.sight-input');
-                                const lightSourceCheckbox = menu.querySelector('.light-source-checkbox');
-                                const brightRangeInput = menu.querySelector('.bright-range-input');
-                                const dimRangeInput = menu.querySelector('.dim-range-input');
+								// Use the queried elements to get values if they exist (only exist for DM HTML)
+                                // Use token.property as fallback if input is missing or value is not finite
+								statsToUpdate.maxHP = maxHPInput ? parseInt(maxHPInput.value, 10) || 0 : token.maxHP;
+								statsToUpdate.hp = hpInput ? parseInt(hpInput.value, 10) || 0 : token.hp;
+								statsToUpdate.initiative = initInput ? parseInt(initInput.value, 10) || 0 : token.initiative;
+								statsToUpdate.ac = acInput ? parseInt(acInput.value, 10) || 0 : token.ac;
+                                statsToUpdate.sightRadius = sightInput ? parseInt(sightInput.value, 10) || 0 : token.sightRadius;
 
-
-								statsToUpdate.maxHP = parseInt(maxHPInput.value, 10) || 0;
-								statsToUpdate.hp = parseInt(hpInput.value, 10) || 0;
-								statsToUpdate.initiative = parseInt(initInput.value, 10) || 0;
-								statsToUpdate.ac = parseInt(acInput.value, 10) || 0;
-                                statsToUpdate.sightRadius = parseInt(sightInput.value, 10) || 0;
+                                // Use the correctly queried lightSourceCheckbox variable
                                 statsToUpdate.isLightSource = lightSourceCheckbox ? lightSourceCheckbox.checked : false;
-                                statsToUpdate.brightRange = statsToUpdate.isLightSource && brightRangeInput ? parseInt(brightRangeInput.value, 10) || 0 : 0;
-                                statsToUpdate.dimRange = statsToUpdate.isLightSource && dimRangeInput ? parseInt(dimRangeInput.value, 10) || 0 : 0;
 
-                                // Ensure dim is always >= bright before sending
+                                // Bright/Dim ranges only relevant if it's a light source and inputs exist (DM only)
+                                statsToUpdate.brightRange = (statsToUpdate.isLightSource && brightRangeInput) ? parseInt(brightRangeInput.value, 10) || 0 : 0;
+                                statsToUpdate.dimRange = (statsToUpdate.isLightSource && dimRangeInput) ? parseInt(dimRangeInput.value, 10) || 0 : 0;
+
+                                // Ensure dim is always >= bright before sending (Server does this too, but belt-and-suspenders)
                                 statsToUpdate.dimRange = Math.max(statsToUpdate.brightRange, statsToUpdate.dimRange);
 
-								socket.emit('updateTokenStats', statsToUpdate); // Send all DM-editable stats + rotation
+                                // Note: If you added player-editable HP/Init inputs (commented out in HTML),
+                                // you would also query them here in the DM block, as they would exist,
+                                // but their values are already being correctly assigned above regardless of role check.
+
 							} else {
-                                // Player can only update rotation via context menu
-                                // Send just the rotation update
-                                // Also allow player to update sight radius if needed? Currently DM-only in menu.
-                                // Let's keep sight DM-only for now as per the form.
-								socket.emit('updateTokenStats', { tokenId: token.id, rotation: rotation });
+                                // User is a Player (and owns the token or is parent owner)
+                                // Player menu only *currently* has the rotate input (which is handled above)
+                                // If you uncommented player-editable HP/Init inputs in the HTML, query them here:
+                                 /*
+                                 const playerHpInput = menu.querySelector('.hp-input');
+                                 const playerInitInput = menu.querySelector('.init-input');
+                                 // Add these values to statsToUpdate if found in the player menu
+                                 if (playerHpInput) statsToUpdate.hp = parseInt(playerHpInput.value, 10) || 0;
+                                 if (playerInitInput) statsToUpdate.initiative = parseInt(playerInitInput.value, 10) || 0;
+                                 */
+                                // No other stats (maxHP, ac, sight, light) are editable or queryable by players.
 							}
+
+                            // Emit the update - Server will handle permissions based on role and ownership
+                            // The statsToUpdate object contains tokenId and rotation for everyone,
+                            // and potentially other fields if user is DM or if player editing is enabled/uncommented.
+							socket.emit('updateTokenStats', statsToUpdate);
 
 							menu.remove();
 							isContextMenuOpen = false;
 						});
 					}
 
+                    // Listener for the Cancel/Close button (All roles)
 					const cancelButton = menu.querySelector('.cancel-button');
-					if (cancelButton) {
+					if (cancelButton) { // This button always exists
 						cancelButton.addEventListener('click', (e) => {
-							e.stopPropagation(); // Prevent click from bubbling and closing menu immediately
+							e.stopPropagation();
 							menu.remove();
 							isContextMenuOpen = false;
 						});
@@ -2088,14 +2123,13 @@
 
 
 					// Add listeners to close menu when clicking/touching outside
+					// These need to be added to the document, but *after* the menu exists
 					function closeMenu(event) {
 						// Check if the event target is outside the menu.
-                        // We don't need to check if it's on a token here, as that's handled by the normal interaction handlers.
-						// If the click/touch is outside the menu, close it.
-						if (isContextMenuOpen && !menu.contains(event.target)) {
+						if (isContextMenuOpen && menu && !menu.contains(event.target)) {
 							menu.remove();
 							isContextMenuOpen = false;
-							// Remove listeners after closing
+							// Remove these specific listeners after closing
 							document.removeEventListener('click', closeMenu);
 							document.removeEventListener('touchstart', closeMenu);
                             document.removeEventListener('contextmenu', closeMenu);
@@ -2109,7 +2143,11 @@
 						document.addEventListener('touchstart', closeMenu);
                         document.addEventListener('contextmenu', closeMenu); // Also close on right-click outside
 					});
-				}
+
+                    // Set the flag to true after the menu is fully shown and listeners are attached
+                    isContextMenuOpen = true; // Setting this here ensures closeMenu works only *after* it's drawn
+
+				} // End showContextMenu
 
 				function handleLongPress(clientX, clientY) {
 					if (isLoading || currentInteractionMode !== 'interact' || isContextMenuOpen) return;
