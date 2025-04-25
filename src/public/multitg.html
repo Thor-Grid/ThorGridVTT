@@ -9,6 +9,7 @@
         script-src 'self' 'unsafe-inline';
         style-src 'self' 'unsafe-inline';
         img-src 'self' data: https:;
+        media-src 'self' data:;  
         connect-src 'self' ws: wss: http: https:;
         font-src 'self';
         object-src 'none';
@@ -1997,13 +1998,19 @@
 
 
                     // Add listener for Light Source checkbox to show/hide range inputs
-                     const lightSourceCheckbox = menu.querySelector('.light-source-checkbox');
-                     const lightRangeInputsDiv = menu.querySelector('.light-range-inputs');
-                     if (lightSourceCheckbox && lightRangeInputsDiv) {
-                         lightSourceCheckbox.addEventListener('change', () => {
-                             lightRangeInputsDiv.style.display = lightSourceCheckbox.checked ? 'flex' : 'none';
-                         });
-                     }
+					// Query elements once after the menu HTML is added
+					const lightSourceCheckbox = menu.querySelector('.light-source-checkbox');
+					const lightRangeInputsDiv = menu.querySelector('.light-range-inputs');
+
+					// Add the listener only if the elements were found (meaning it's a DM context menu)
+					if (lightSourceCheckbox && lightRangeInputsDiv) {
+						lightSourceCheckbox.addEventListener('change', () => {
+							// Use the correct variable name
+							lightRangeInputsDiv.style.display = lightSourceCheckbox.checked ? 'flex' : 'none';
+						});
+						// Initial display state is already handled by the menuHTML generation
+						// e.g., <div style="display: ${token.isLightSource ? 'flex' : 'none'}; ...>
+					}
 
 
 					const removeButton = menu.querySelector('.remove-token');
@@ -2045,7 +2052,7 @@
 								statsToUpdate.initiative = parseInt(initInput.value, 10) || 0;
 								statsToUpdate.ac = parseInt(acInput.value, 10) || 0;
                                 statsToUpdate.sightRadius = parseInt(sightInput.value, 10) || 0;
-                                statsToUpdate.isLightSource = lightSourceCheckbox ? isLightSourceCheckbox.checked : false;
+                                statsToUpdate.isLightSource = lightSourceCheckbox ? lightSourceCheckbox.checked : false;
                                 statsToUpdate.brightRange = statsToUpdate.isLightSource && brightRangeInput ? parseInt(brightRangeInput.value, 10) || 0 : 0;
                                 statsToUpdate.dimRange = statsToUpdate.isLightSource && dimRangeInput ? parseInt(dimRangeInput.value, 10) || 0 : 0;
 
