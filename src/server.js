@@ -12,9 +12,10 @@ const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
         origin: (origin, callback) => {
+            // Allow requests from same origin, file:// (for Electron), and explicit http/https
             const allowed = !origin || origin === 'null' || origin.startsWith('http:') || origin.startsWith('https:') || origin.startsWith('file:');
             if (allowed) {
-                console.log(`CORS check - Allowed Origin: ${origin}`);
+                // console.log(`CORS check - Allowed Origin: ${origin}`); // Uncomment for verbose logging
                 callback(null, true);
             } else {
                 console.warn(`CORS check - Denied Origin: ${origin}`);
@@ -24,7 +25,7 @@ const io = socketIo(server, {
         methods: ['GET', 'POST', 'OPTIONS'],
         credentials: true
     },
-    serveClient: true,
+    serveClient: true, // Serve the socket.io client library
     pingInterval: 10000,
     pingTimeout: 5000,
     transports: ['websocket', 'polling']
@@ -38,16 +39,17 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'multitg.html'));
 });
 
-// Log requests for debugging
-app.use((req, res, next) => {
-    console.log(`Request: ${req.method} ${req.url}`);
-    next();
-});
+// Log requests for debugging (optional)
+// app.use((req, res, next) => {
+//     console.log(`Request: ${req.method} ${req.url}`);
+//     next();
+// });
 
 // Define paths and state early
-const publicPath = path.join(__dirname, 'public');
+// const publicPath = path.join(__dirname, 'public'); // This variable isn't used, can be removed if preferred
 
 // --- State File Path Logic ---
+// Use USER_DATA_PATH provided by Electron main process, fallback to local 'data' directory
 const userDataPath = process.env.USER_DATA_PATH || path.join(__dirname, '..', 'data');
 const stateFileName = 'gameState.json';
 const stateFilePath = path.join(userDataPath, stateFileName);
@@ -59,46 +61,48 @@ async function ensureStateDirExists() {
     } catch (err) {
         if (err.code !== 'EEXIST') {
             console.error(`Error creating directory for state file (${path.dirname(stateFilePath)}):`, err);
+            // In a production app, you might want to handle this more severely
         }
     }
 }
+// Call immediately to ensure dir exists on startup
 ensureStateDirExists();
 // --- End State File Path Logic ---
 
+// Game state - This object is saved and loaded
 let gameState = {
     tokens: [],
     walls: [],
     backgroundImageUrl: '',
     gridSize: { width: 40, height: 30 },
-    scale: 1,
-    panX: 0,
-    panY: 0,
-    isGridVisible: true,
-    players: {}
+    viewState: { scale: 1, panX: 0, panY: 0 }, // Store view state here
+    isGridVisible: true, // Controls drawing grid lines
+    // Removed 'players' from here - active players are managed in memory
 };
-let connectedDMs = new Set();
-let connectedPlayers = new Map();
 
-// *** MOVED normalizeWalls FUNCTION HERE ***
-// State normalization function
+// In-memory tracking of connected clients
+let connectedDMs = new Set(); // Set of socket IDs for DMs
+let connectedPlayers = new Map(); // Map of socket ID -> username
+
+// State normalization function (moved outside load/save for reuse)
 function normalizeWalls(wallsData, width, height) {
     // Ensure width and height are positive integers
     const validWidth = Math.max(1, Math.floor(width || 1));
     const validHeight = Math.max(1, Math.floor(height || 1));
 
+    // Create a new 2D array filled with 0s for the target size
     const normalized = Array(validHeight).fill(null).map(() => Array(validWidth).fill(0));
 
     if (wallsData && Array.isArray(wallsData)) {
+        // Copy existing wall data up to the bounds of the new size
         for (let y = 0; y < Math.min(validHeight, wallsData.length); y++) {
             if (wallsData[y] && Array.isArray(wallsData[y])) {
                 for (let x = 0; x < Math.min(validWidth, wallsData[y].length); x++) {
                     // Ensure the value is strictly 1, otherwise default to 0
                     normalized[y][x] = wallsData[y][x] === 1 ? 1 : 0;
                 }
-            } else {
-                // If a row is missing or not an array, it remains filled with 0s
-                console.warn(`normalizeWalls: Row at index ${y} is invalid or missing. Filling with 0s.`);
             }
+            // If a row is invalid or missing, the corresponding row in 'normalized' remains 0s
         }
     } else if (wallsData) {
         // If wallsData exists but isn't an array
@@ -109,65 +113,104 @@ function normalizeWalls(wallsData, width, height) {
     return normalized;
 }
 
-// Ensure initializeWalls uses the potentially updated gridSize
+// Initialize walls on startup if needed (will be overwritten by loadState if file exists)
 function initializeWalls() {
     const { width, height } = gameState.gridSize;
-    // Ensure walls is always an array, even if loading fails or state is new
-    gameState.walls = normalizeWalls(gameState.walls || [], width, height); // Pass potentially empty array
-    console.log(`Initialized/Normalized walls for size ${width}x${height}`);
+     // Only re-initialize if gameState.walls is null or not an array
+    if (!Array.isArray(gameState.walls)) {
+         gameState.walls = normalizeWalls([], width, height);
+    } else {
+         // Even if it's an array, normalize it to the current grid size
+         gameState.walls = normalizeWalls(gameState.walls, width, height);
+    }
+    console.log(`Walls normalized for size ${width}x${height}`);
 }
+
 
 async function loadState() {
     try {
         await ensureStateDirExists(); // Ensure directory exists before reading
         const data = await fs.readFile(stateFilePath, 'utf8');
         const parsed = JSON.parse(data);
-        gameState = {
-            tokens: parsed.tokens || [],
-            walls: parsed.walls || [],
-            backgroundImageUrl: parsed.backgroundImageUrl || '',
-            gridSize: parsed.gridSize || { width: 40, height: 30 },
-            scale: parsed.scale || 1,
-            panX: parsed.panX || 0,
-            panY: parsed.panY || 0,
-            isGridVisible: parsed.isGridVisible !== undefined ? parsed.isGridVisible : true,
-            players: parsed.players || {}
-        };
-        gameState.walls = normalizeWalls(gameState.walls, gameState.gridSize.width, gameState.gridSize.height);
+
+        // Load specific properties, providing defaults if missing
+        gameState.tokens = Array.isArray(parsed.tokens) ? parsed.tokens : [];
+        // Normalize walls based on potentially loaded gridSize
+        gameState.gridSize = parsed.gridSize || { width: 40, height: 30 };
+        gameState.walls = normalizeWalls(parsed.walls, gameState.gridSize.width, gameState.gridSize.height);
+        gameState.backgroundImageUrl = parsed.backgroundImageUrl || '';
+        gameState.isGridVisible = parsed.isGridVisible !== undefined ? parsed.isGridVisible : true;
+
+        // Load view state if present, otherwise use defaults
+        gameState.viewState = parsed.viewState || { scale: 1, panX: 0, panY: 0 };
+
+
+        // Ensure tokens have necessary default properties if missing from loaded state (for backwards compatibility)
+        gameState.tokens = gameState.tokens.map(token => ({
+            ...token,
+             // Add defaults for new properties if loading older state files
+             maxHP: token.maxHP !== undefined ? token.maxHP : 0,
+             hp: token.hp !== undefined ? token.hp : 0,
+             initiative: token.initiative !== undefined ? token.initiative : 0,
+             ac: token.ac !== undefined ? token.ac : 0,
+             rotation: token.rotation !== undefined ? token.rotation : 0,
+             sightRadius: token.sightRadius !== undefined ? token.sightRadius : 0, // Ensure sightRadius exists
+             isLightSource: Boolean(token.isLightSource), // Ensure isLightSource exists and is boolean
+             brightRange: token.brightRange !== undefined ? token.brightRange : 0, // Ensure brightRange exists
+             dimRange: token.dimRange !== undefined ? token.dimRange : 0,         // Ensure dimRange exists
+             isMinion: token.isMinion !== undefined ? token.isMinion : false,
+             owner: token.owner || null,
+             parentOwner: token.parentOwner || null,
+             size: Number.isFinite(token.size) && token.size > 0 ? token.size : 1, // Ensure size is valid number
+        }));
+
+
         console.log(`State loaded successfully from ${stateFilePath}`);
+        console.log(`Loaded gridSize: ${gameState.gridSize.width}x${gameState.gridSize.height}`);
+        console.log(`Loaded ${gameState.tokens.length} tokens.`);
+
     } catch (err) {
         if (err.code === 'ENOENT') {
             console.log(`No saved state file found at ${stateFilePath}. Initializing default state.`);
-            initializeWalls(); // Initialize default walls if no state file
         } else {
             console.error(`Error loading state from ${stateFilePath}:`, err.message);
-            initializeWalls();
         }
-        // Initialize default/empty state parts if load failed or no file
-        gameState.players = gameState.players || {};
-        gameState.scale = gameState.scale || 1;
-        gameState.panX = gameState.panX || 0;
-        gameState.panY = gameState.panY || 0;
-        gameState.isGridVisible = gameState.isGridVisible !== undefined ? gameState.isGridVisible : true;
+        // Initialize default state parts if load failed or no file
+        gameState = {
+            tokens: [],
+            walls: normalizeWalls([], gameState.gridSize.width, gameState.gridSize.height), // Ensure walls are initialized for default/loaded size
+            backgroundImageUrl: '',
+            gridSize: gameState.gridSize || { width: 40, height: 30 }, // Keep size if it was loaded
+            viewState: { scale: 1, panX: 0, panY: 0 },
+            isGridVisible: true,
+        };
+         console.log("Initialized default state.");
     }
+    // Ensure walls are normalized again just in case loadState had issues but didn't throw
+    // or if default state was initialized.
+     gameState.walls = normalizeWalls(gameState.walls, gameState.gridSize.width, gameState.gridSize.height);
 }
 
+// Save state function with debouncing
 const saveStateDebounced = debounce(async () => {
     try {
         await ensureStateDirExists(); // Ensure directory exists before writing
+        // Ensure walls are normalized to current size before saving
         gameState.walls = normalizeWalls(gameState.walls, gameState.gridSize.width, gameState.gridSize.height);
         await fs.writeFile(stateFilePath, JSON.stringify(gameState, null, 2));
         console.log(`Game state saved successfully (autosave) to ${stateFilePath}`);
-        io.emit('saveSuccess', 'Game state saved successfully (autosave).');
+        // io.emit('saveSuccess', 'Game state saved successfully (autosave).'); // Avoid spamming notifications for autosave
     } catch (err) {
         console.error(`Error saving state (autosave) to ${stateFilePath}:`, err.message);
-        io.emit('error', 'Failed to save game state (autosave).');
+        // io.emit('error', 'Failed to save game state (autosave).'); // Avoid spamming errors
     }
 }, 5000); // 5 seconds debounce
 
+// Save state function for manual saves
 async function saveStateImmediate() {
     try {
         await ensureStateDirExists();
+        // Ensure walls are normalized to current size before saving
         gameState.walls = normalizeWalls(gameState.walls, gameState.gridSize.width, gameState.gridSize.height);
         await fs.writeFile(stateFilePath, JSON.stringify(gameState, null, 2));
         console.log(`Game state saved successfully (manual) to ${stateFilePath}`);
@@ -178,7 +221,8 @@ async function saveStateImmediate() {
     }
 }
 
-// Periodic save interval
+// Periodic save interval (in addition to debounced saves)
+// This acts as a safety net for state changes that might not trigger debounced save (e.g., app close)
 setInterval(async () => {
     try {
         await ensureStateDirExists();
@@ -188,9 +232,9 @@ setInterval(async () => {
     } catch (err) {
         console.error(`Error saving state (periodic) to ${stateFilePath}:`, err.message);
     }
-}, 300000); // 5 minutes
+}, 300000); // 5 minutes (300 * 1000 ms)
 
-// --- Socket.IO Handlers ---
+// --- Helper Functions for Socket Handlers ---
 function getUsernameFromSocket(socket) {
     return connectedPlayers.get(socket.id) || null;
 }
@@ -199,166 +243,380 @@ function roleFromSocket(socket) {
     return connectedDMs.has(socket.id) ? 'dm' : 'player';
 }
 
+// --- Socket.IO Handlers ---
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id, 'Origin:', socket.handshake.headers.origin);
 
     socket.on('login', ({ role, username }) => {
-        console.log(`Client ${socket.id} joined as ${role} with username ${username}`);
-        if (!username || typeof username !== 'string' || username.trim() === '') {
+        const trimmedUsername = username ? username.trim() : '';
+        console.log(`Client ${socket.id} attempting login as ${role} with username "${trimmedUsername}"`);
+
+        if (!trimmedUsername || typeof trimmedUsername !== 'string') {
             socket.emit('error', 'Invalid username');
+            console.warn(`Client ${socket.id} login failed: Invalid username.`);
             return;
         }
-        if (Object.values(gameState.players).includes(username) && gameState.players[username] !== socket.id) {
+
+        // Check if the desired username is already in use by a *different* active socket ID
+        const usernameIsTakenByOther = Array.from(connectedPlayers.entries())
+            .some(([id, name]) => name === trimmedUsername && id !== socket.id);
+
+        if (usernameIsTakenByOther) {
             socket.emit('error', 'Username already in use');
+            console.warn(`Client ${socket.id} login failed: Username "${trimmedUsername}" already in use.`);
             return;
         }
+
+        // If we reach here, the username is either new or belongs to this socket (e.g., reconnect)
+
+        // If the username was previously used by *this* socket ID, clean up the old entry first
+        // (Should be handled by disconnect, but belt+suspenders)
+        // Find if this socket ID had a different username before
+         if (connectedPlayers.has(socket.id) && connectedPlayers.get(socket.id) !== trimmedUsername) {
+              console.log(`Client ${socket.id} changing username from "${connectedPlayers.get(socket.id)}" to "${trimmedUsername}"`);
+         }
+
+
+        // Assign role
         if (role === 'dm') {
             connectedDMs.add(socket.id);
-            connectedPlayers.set(socket.id, username || 'DM');
         } else {
-            connectedPlayers.set(socket.id, username);
-            gameState.players[username] = socket.id;
+             // Ensure they are not in the DM set if they login as player
+             connectedDMs.delete(socket.id);
         }
-        socket.emit('init', gameState);
-        socket.emit('roleAssigned', { role: roleFromSocket(socket), username });
-        io.emit('clients', Array.from(io.sockets.sockets.keys()));
+
+        // Store the username for this socket, overwriting any previous one
+        connectedPlayers.set(socket.id, trimmedUsername);
+        console.log(`Client ${socket.id} logged in successfully as ${role} with username "${trimmedUsername}"`);
+
+        // Send initial state
+        // We send the entire gameState object (excluding in-memory player list)
+        const stateToSend = { ...gameState };
+        // We don't need to send the view state back on init, client manages its own view.
+        // But we included it in the save format, so it will be part of fullStateUpdate/import.
+        // Delete it from the *initial* send if you want to force client view reset on fresh connect.
+        // For now, let's keep it consistent with the save format and send it.
+
+
+        socket.emit('init', stateToSend);
+
+        // Confirm role assignment to client
+        socket.emit('roleAssigned', { role: roleFromSocket(socket), username: trimmedUsername });
+
+        // Broadcast list of *usernames* to all clients (including the sender)
+        io.emit('clients', Array.from(connectedPlayers.values()));
+
     });
 
     socket.on('addToken', (tokenData) => {
         const role = roleFromSocket(socket);
         const username = getUsernameFromSocket(socket);
+
+        // Only allow DM or a logged-in player to add a token
         if (role === 'dm' || username) {
             const newToken = {
-                ...tokenData,
-                id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                owner: username,
-                isMinion: tokenData.isMinion || false,
-                parentOwner: tokenData.isMinion ? username : null
+                ...tokenData, // Includes name, size, rotation, image/color, isMinion
+                id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // Generate unique ID on server
+                owner: username, // Set owner based on logged-in user
+                parentOwner: tokenData.isMinion ? username : null, // Set parent owner if it's a minion
+
+                 // Ensure default numeric/boolean values if not provided by client or are invalid
+                x: Number.isFinite(tokenData.x) ? Number(tokenData.x) : Math.floor(gameState.gridSize.width / 2), // Default position
+                y: Number.isFinite(tokenData.y) ? Number(tokenData.y) : Math.floor(gameState.gridSize.height / 2),
+                size: Number.isFinite(tokenData.size) && tokenData.size > 0 ? Number(tokenData.size) : 1,
+                rotation: Number.isFinite(tokenData.rotation) ? Number(tokenData.rotation) % 360 : 0,
+                maxHP: role === 'dm' && Number.isFinite(tokenData.maxHP) ? Number(tokenData.maxHP) : 0, // Only DM sets maxHP
+                hp: role === 'dm' && Number.isFinite(tokenData.hp) ? Number(tokenData.hp) : 0,         // Only DM sets hp
+                initiative: Number.isFinite(tokenData.initiative) ? Number(tokenData.initiative) : 0,
+                ac: Number.isFinite(tokenData.ac) ? Number(tokenData.ac) : 0,
+                sightRadius: Number.isFinite(tokenData.sightRadius) ? Number(tokenData.sightRadius) : 0, // <--- Handle sightRadius from client
+                isLightSource: Boolean(tokenData.isLightSource), // <--- Handle isLightSource
+                brightRange: Number.isFinite(tokenData.brightRange) ? Number(tokenData.brightRange) : 0, // <--- Handle brightRange
+                dimRange: Number.isFinite(tokenData.dimRange) ? Number(tokenData.dimRange) : 0,     // <--- Handle dimRange
+                name: tokenData.name && tokenData.name.trim() !== '' ? tokenData.name.trim() : (username ? `${username}'s Token` : 'Unnamed Token'), // Default name
+
+
+                 // Image/color handling - client sends imageUrl or backgroundColor
+                 imageUrl: tokenData.imageUrl || null,
+                 imageFilename: tokenData.imageFilename || null,
+                 backgroundColor: tokenData.backgroundColor || null
             };
+
+            // Server-side validation for position bounds (optional but good)
+            const maxX = gameState.gridSize.width - newToken.size;
+            const maxY = gameState.gridSize.height - newToken.size;
+            newToken.x = Math.max(0, Math.min(newToken.x, maxX));
+            newToken.y = Math.max(0, Math.min(newToken.y, maxY));
+
+
             gameState.tokens.push(newToken);
-            io.emit('updateTokens', gameState.tokens);
-            if (role === 'dm') {
-                saveStateDebounced();
-            }
+            console.log(`Token added by "${username}" (${role}): "${newToken.name}" (ID: ${newToken.id})`);
+            io.emit('updateTokens', gameState.tokens); // Broadcast the updated list of tokens
+            saveStateDebounced(); // Auto-save state after change
+        } else {
+             socket.emit('error', 'Authentication required or role mismatch to add tokens.');
+             console.warn(`Client ${socket.id} attempted to add token without login or proper role.`);
         }
     });
 
+    // --- Modified moveToken handler ---
+    // Now receives rotation from client move events
     socket.on('moveToken', ({ tokenId, x, y, rotation }) => {
         const role = roleFromSocket(socket);
         const username = getUsernameFromSocket(socket);
         const token = gameState.tokens.find(t => t.id === tokenId);
+
+        // Check if token exists AND if user is DM OR owns/parents the token
         if (token && (role === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username))) {
-            token.x = x;
-            token.y = y;
-            token.rotation = rotation;
-            io.emit('updateTokens', gameState.tokens);
-            if (role === 'dm') {
-                saveStateDebounced();
+            // Ensure position and rotation are valid numbers
+            const newX = Number.isFinite(x) ? Number(x) : token.x;
+            const newY = Number.isFinite(y) ? Number(y) : token.y;
+            const newRotation = Number.isFinite(rotation) ? Number(rotation) % 360 : token.rotation;
+
+            // Server-side validation for position bounds
+            const tokenSize = token.size || 1;
+            const maxX = gameState.gridSize.width - tokenSize;
+            const maxY = gameState.gridSize.height - tokenSize;
+            const clampedX = Math.max(0, Math.min(newX, maxX));
+            const clampedY = Math.max(0, Math.min(newY, maxY));
+
+
+            // Only update if position or rotation actually changed
+            if (token.x !== clampedX || token.y !== clampedY || token.rotation !== newRotation) {
+                token.x = clampedX;
+                token.y = clampedY;
+                token.rotation = newRotation;
+                // console.log(`Token moved: "${token.name}" (ID: ${tokenId}) to [${token.x}, ${token.y}], Rot: ${token.rotation}`); // COMMENTED OUT THIS LINE
+                io.emit('updateTokens', gameState.tokens); // Broadcast the updated list of tokens
+                saveStateDebounced(); // Auto-save state after change
             }
+        } else {
+             // Optional: Log unauthorized move attempts
+             // console.warn(`Client ${socket.id} attempted unauthorized move of token ${tokenId}.`);
         }
     });
 
     socket.on('removeToken', (tokenId) => {
         if (roleFromSocket(socket) === 'dm') {
+            const initialTokenCount = gameState.tokens.length;
             gameState.tokens = gameState.tokens.filter(t => t.id !== tokenId);
-            io.emit('updateTokens', gameState.tokens);
-            saveStateDebounced();
+            if (gameState.tokens.length < initialTokenCount) {
+                console.log(`Token removed: ${tokenId} by DM "${getUsernameFromSocket(socket)}"`);
+                io.emit('updateTokens', gameState.tokens); // Broadcast the updated list
+                saveStateDebounced(); // Auto-save state after change
+            } else {
+                 console.warn(`DM "${getUsernameFromSocket(socket)}" attempted to remove non-existent token ${tokenId}.`);
+            }
+        } else {
+             socket.emit('error', 'Only the DM can remove tokens.');
+             console.warn(`Client ${socket.id} attempted unauthorized token removal.`);
         }
     });
 
     socket.on('updateWalls', (newWalls) => {
         if (roleFromSocket(socket) === 'dm') {
-            gameState.walls = normalizeWalls(newWalls, gameState.gridSize.width, gameState.gridSize.height);
-            io.emit('updateWalls', gameState.walls);
-            saveStateDebounced();
+            // Ensure newWalls is an array before processing
+            if (Array.isArray(newWalls)) {
+                gameState.walls = normalizeWalls(newWalls, gameState.gridSize.width, gameState.gridSize.height);
+                console.log(`Walls updated by DM "${getUsernameFromSocket(socket)}"`);
+                io.emit('updateWalls', gameState.walls); // Broadcast the updated walls array
+                saveStateDebounced(); // Auto-save state after change
+            } else {
+                 console.warn(`DM "${getUsernameFromSocket(socket)}" sent invalid wall data.`);
+            }
+        } else {
+             socket.emit('error', 'Only the DM can update walls.');
+             console.warn(`Client ${socket.id} attempted unauthorized wall update.`);
         }
     });
 
     socket.on('updateGridVisibility', (isGridVisible) => {
         if (roleFromSocket(socket) === 'dm') {
-            gameState.isGridVisible = isGridVisible;
-            io.emit('updateGridVisibility', gameState.isGridVisible);
-            saveStateDebounced();
+            gameState.isGridVisible = Boolean(isGridVisible); // Ensure boolean
+            console.log(`Grid visibility set to ${gameState.isGridVisible} by DM "${getUsernameFromSocket(socket)}"`);
+            io.emit('updateGridVisibility', gameState.isGridVisible); // Broadcast the visibility state
+            saveStateDebounced(); // Auto-save state after change
+        } else {
+             socket.emit('error', 'Only the DM can toggle grid visibility.');
+             console.warn(`Client ${socket.id} attempted unauthorized grid visibility toggle.`);
         }
     });
 
     socket.on('updateBackground', (url) => {
         if (roleFromSocket(socket) === 'dm') {
-            gameState.backgroundImageUrl = url;
-            io.emit('updateBackground', url);
-            saveStateDebounced();
+            gameState.backgroundImageUrl = url || ''; // Ensure it's a string or empty
+            console.log(`Background updated by DM "${getUsernameFromSocket(socket)}"`);
+            io.emit('updateBackground', gameState.backgroundImageUrl); // Broadcast the background URL
+            saveStateDebounced(); // Auto-save state after change
+        } else {
+             socket.emit('error', 'Only the DM can change the background.');
+             console.warn(`Client ${socket.id} attempted unauthorized background update.`);
         }
     });
 
     socket.on('updateGridSize', ({ width, height }) => {
         if (roleFromSocket(socket) === 'dm') {
-            gameState.gridSize = { width, height };
-            gameState.walls = normalizeWalls(gameState.walls, width, height);
-            io.emit('updateGridSize', gameState.gridSize);
-            io.emit('updateWalls', gameState.walls);
-            saveStateDebounced();
+            const newWidth = Math.max(1, Math.floor(Number(width)));
+            const newHeight = Math.max(1, Math.floor(Number(height)));
+
+            // Only update if size is actually different
+            if (gameState.gridSize.width !== newWidth || gameState.gridSize.height !== newHeight) {
+                gameState.gridSize = { width: newWidth, height: newHeight };
+                // Normalize walls to the new size (important!)
+                gameState.walls = normalizeWalls(gameState.walls, newWidth, newHeight);
+                console.log(`Grid size updated to ${newWidth}x${newHeight} by DM "${getUsernameFromSocket(socket)}"`);
+                io.emit('updateGridSize', gameState.gridSize); // Broadcast the new size
+                io.emit('updateWalls', gameState.walls); // Broadcast normalized walls (size might have changed)
+                saveStateDebounced(); // Auto-save state after change
+            }
+        } else {
+             socket.emit('error', 'Only the DM can change the grid size.');
+             console.warn(`Client ${socket.id} attempted unauthorized grid size change.`);
         }
     });
 
     socket.on('saveState', () => {
         if (roleFromSocket(socket) === 'dm') {
-            saveStateImmediate();
+            saveStateImmediate(); // Manual save
+        } else {
+             socket.emit('error', 'Only the DM can manually save the state.');
         }
     });
 
+    // --- Handles state import and broadcasts the new state ---
     socket.on('importState', async (newState) => {
         if (roleFromSocket(socket) === 'dm') {
             try {
-                gameState = {
-                    tokens: newState.tokens || [],
-                    walls: normalizeWalls(newState.walls || [], newState.gridSize?.width || gameState.gridSize.width, newState.gridSize?.height || gameState.gridSize.height),
-                    backgroundImageUrl: newState.backgroundImageUrl || '',
-                    gridSize: newState.gridSize || { width: 40, height: 30 },
-                    scale: gameState.scale,
-                    panX: gameState.panX,
-                    panY: gameState.panY,
-                    isGridVisible: gameState.isGridVisible,
-                    players: gameState.players || {}
-                };
+                 // Basic validation of the imported state structure
+                if (!newState || !Array.isArray(newState.tokens) || !Array.isArray(newState.walls) || !newState.gridSize) {
+                     throw new Error('Invalid imported state structure');
+                }
+
+                // Apply the imported state to the server's gameState
+                gameState.tokens = newState.tokens;
+                gameState.gridSize = newState.gridSize; // Use imported grid size
+                // Normalize imported walls based on the imported grid size
+                gameState.walls = normalizeWalls(newState.walls, gameState.gridSize.width, gameState.gridSize.height);
+                gameState.backgroundImageUrl = newState.backgroundImageUrl || '';
+                gameState.isGridVisible = newState.isGridVisible !== undefined ? newState.isGridVisible : true;
+
+                // Optional: Import view state if available, otherwise keep current or reset
+                gameState.viewState = newState.viewState || { scale: 1, panX: 0, panY: 0 };
+
+                // Ensure imported tokens have necessary defaults (same logic as loadState)
+                 gameState.tokens = gameState.tokens.map(token => ({
+                    ...token,
+                    maxHP: token.maxHP !== undefined ? token.maxHP : 0,
+                    hp: token.hp !== undefined ? token.hp : 0,
+                    initiative: token.initiative !== undefined ? token.initiative : 0,
+                    ac: token.ac !== undefined ? token.ac : 0,
+                    rotation: token.rotation !== undefined ? token.rotation : 0,
+                    sightRadius: token.sightRadius !== undefined ? token.sightRadius : 0, // Ensure sightRadius exists
+                    isLightSource: Boolean(token.isLightSource), // Ensure isLightSource exists and is boolean
+                    brightRange: token.brightRange !== undefined ? token.brightRange : 0, // Ensure brightRange exists
+                    dimRange: token.dimRange !== undefined ? token.dimRange : 0,         // Ensure dimRange exists
+                    isMinion: token.isMinion !== undefined ? token.isMinion : false,
+                    owner: token.owner || null,
+                    parentOwner: token.parentOwner || null,
+                     size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure size is valid number
+                    // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
+                    imageUrl: token.imageUrl || null,
+                    backgroundColor: token.backgroundColor || null,
+                    imageFilename: token.imageFilename || null,
+
+                 }));
+
+
+                // Save the imported state immediately to the file
                 await fs.writeFile(stateFilePath, JSON.stringify(gameState, null, 2));
-                io.emit('importState', gameState);
+
+                // Broadcast the *entire* new state to all clients
+                // This will trigger the 'fullStateUpdate' handler on clients
+                io.emit('fullStateUpdate', gameState);
+
+                // Send success notification back to the importing DM
                 socket.emit('saveSuccess', 'Game state imported and saved successfully.');
-                console.log('Game state imported successfully');
+                console.log(`Game state imported by DM "${getUsernameFromSocket(socket)}"`);
+
             } catch (err) {
                 console.error('Error importing state:', err);
-                socket.emit('error', 'Failed to import game state.');
+                socket.emit('error', `Failed to import game state: ${err.message}`);
             }
+        } else {
+             socket.emit('error', 'Only the DM can import the state.');
         }
     });
 
-    socket.on('updateTokenStats', ({ tokenId, hp, initiative, ac, maxHP }) => {
+    // --- Modified updateTokenStats handler ---
+    // Now receives rotation, sightRadius, isLightSource, brightRange, dimRange from the context menu save
+    socket.on('updateTokenStats', ({ tokenId, hp, initiative, ac, maxHP, rotation, sightRadius, isLightSource, brightRange, dimRange }) => {
         const role = roleFromSocket(socket);
         const username = getUsernameFromSocket(socket);
         const token = gameState.tokens.find(t => t.id === tokenId);
+
+        // Check if token exists AND if user is DM OR owns/parents the token
         if (token && (role === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username))) {
-            token.hp = hp;
-            token.initiative = initiative;
-            token.ac = ac;
-            if (maxHP !== undefined) token.maxHP = maxHP;
-            io.emit('updateTokens', gameState.tokens);
+            let changed = false;
+
+            // Update stats if provided and are valid numbers (DM or Owner depending on context menu fields)
+            // Client context menu restricts which fields are sent by player owners, server trusts this for simplicity
+            if (hp !== undefined) { const numHp = Number(hp); if (Number.isFinite(numHp) && token.hp !== numHp) { token.hp = numHp; changed = true; }}
+            if (initiative !== undefined) { const numInit = Number(initiative); if (Number.isFinite(numInit) && token.initiative !== numInit) { token.initiative = numInit; changed = true; }}
+            if (ac !== undefined) { const numAc = Number(ac); if (Number.isFinite(numAc) && token.ac !== numAc) { token.ac = numAc; changed = true; }}
+            // Max HP, Sight Radius, Light Source properties are DM-only fields in the context menu
             if (role === 'dm') {
-                saveStateDebounced();
+                 if (maxHP !== undefined) { const numMaxHp = Number(maxHP); if (Number.isFinite(numMaxHp) && numMaxHp >= 0 && token.maxHP !== numMaxHp) { token.maxHP = numMaxHp; changed = true; }}
+                 if (sightRadius !== undefined) { const numSight = Number(sightRadius); if (Number.isFinite(numSight) && numSight >= 0 && token.sightRadius !== numSight) { token.sightRadius = numSight; changed = true; }}
+                 if (isLightSource !== undefined) { const boolLight = Boolean(isLightSource); if (token.isLightSource !== boolLight) { token.isLightSource = boolLight; changed = true; }}
+                 if (brightRange !== undefined) { const numBright = Number(brightRange); if (Number.isFinite(numBright) && numBright >= 0 && token.brightRange !== numBright) { token.brightRange = numBright; changed = true; }}
+                 if (dimRange !== undefined) { const numDim = Number(dimRange); if (Number.isFinite(numDim) && numDim >= 0 && token.dimRange !== numDim) { token.dimRange = numDim; changed = true; }}
+                 // Ensure dim is always >= bright
+                 if (token.dimRange < token.brightRange) {
+                     token.dimRange = token.brightRange;
+                     changed = true; // This change also needs to be reflected
+                 }
             }
+
+            // Rotation can be updated by DM or player owner via context menu
+            // The client sends rotation with both moveToken and updateTokenStats
+            // Ensure we handle rotation updates here too if sent
+             if (rotation !== undefined) {
+                 const numRotation = Number(rotation) % 360;
+                 if (Number.isFinite(numRotation) && token.rotation !== numRotation) { token.rotation = numRotation; changed = true; }
+             }
+
+
+            if (changed) {
+                 console.log(`Token stats updated: "${token.name}" (ID: ${tokenId}) by "${username}" (${role})`);
+                 io.emit('updateTokens', gameState.tokens); // Broadcast the updated list
+                 if (role === 'dm') { // Only autosave if DM made changes
+                     saveStateDebounced();
+                 }
+            }
+        } else {
+             // Optional: Log unauthorized stat update attempts
+             // console.warn(`Client ${socket.id} attempted unauthorized stat update of token ${tokenId}.`);
         }
     });
+
 
     socket.on('disconnect', (reason) => {
         console.log('Client disconnected:', socket.id, 'Reason:', reason);
+
+        // Remove from connected sets/maps
         connectedDMs.delete(socket.id);
-        const username = connectedPlayers.get(socket.id);
-        if (username) {
-            delete gameState.players[username];
-            connectedPlayers.delete(socket.id);
-            console.log(`Removed username ${username} from players`);
-        }
-        io.emit('clients', Array.from(io.sockets.sockets.keys()));
+        // Remove the socket ID and username from the map of active players
+        connectedPlayers.delete(socket.id);
+        console.log(`Removed socket ${socket.id} from active players. Reason: ${reason}`);
+
+
+        // Broadcast updated list of connected client usernames
+        io.emit('clients', Array.from(connectedPlayers.values()));
     });
+
+    // Optional: Add a ping/pong handler if needed for monitoring latency
+    // socket.on('ping', (callback) => { callback(); });
 });
 
-// Export for Electron
+// Export for Electron (and potentially other uses)
 module.exports = { server, io, loadState, saveStateImmediate };
