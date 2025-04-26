@@ -1,7 +1,8 @@
 module.exports = {
   packagerConfig: {
-    icon: './build/icon', // Base path for icons (.ico, .icns, .png)
+    icon: './build/icon',
     name: 'ThorGrid',
+    executableName: 'thor-grid',
     appBundleId: 'com.thorgrid.vtt',
     overwrite: true
   },
@@ -29,15 +30,9 @@ module.exports = {
       name: '@electron-forge/maker-deb',
       config: {
         options: {
-          icon: './build/icon.png'
-        }
-      }
-    },
-    {
-      name: '@electron-forge/maker-rpm',
-      config: {
-        options: {
-          icon: './build/icon.png'
+          icon: './build/icon.png',
+          name: 'ThorGrid',
+          productName: 'ThorGridVTT'
         }
       }
     }
