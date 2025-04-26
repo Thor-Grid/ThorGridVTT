@@ -597,6 +597,52 @@
 
                     return false; // No collision detected in the proposed new position
                 }
+				
+				// --- Helper to check if a cell is adjacent to an owned player token ---
+                // Used for highlighting walls near players
+                function isAdjacentToOwnedPlayerToken(wallX, wallY, tokensData, username, currentRole) {
+                    // This check is only relevant for players
+                    if (currentRole !== 'player') return false;
+
+                    // Filter for tokens owned by the current player or their minions
+                    const ownedPlayerTokens = tokensData.filter(token =>
+                        token.owner === username || (token.isMinion && token.parentOwner === username)
+                    );
+
+                    // Iterate through each owned player token
+                    for (const playerToken of ownedPlayerTokens) {
+                        const tokenSize = playerToken.size || 1;
+
+                        // Check all cells the player token occupies and the 8 adjacent cells
+                        // We iterate a 3x3 area centered around each cell the token occupies
+                        for (let tokenCellY = playerToken.y; tokenCellY < playerToken.y + tokenSize; tokenCellY++) {
+                             for (let tokenCellX = playerToken.x; tokenCellX < playerToken.x + tokenSize; tokenCellX++) {
+
+                                  // Iterate through the 3x3 area around *this* token cell
+                                  for (let dy = -1; dy <= 1; dy++) {
+                                      for (let dx = -1; dx <= 1; dx++) {
+                                          const adjacentX = tokenCellX + dx;
+                                          const adjacentY = tokenCellY + dy;
+
+                                          // Skip the cells *occupied by the token itself*
+                                          if (adjacentX >= playerToken.x && adjacentX < playerToken.x + tokenSize &&
+                                              adjacentY >= playerToken.y && adjacentY < playerToken.y + tokenSize) {
+                                               continue;
+                                          }
+
+                                          // Check if this adjacent cell is the wall cell we're looking at
+                                          if (adjacentX === wallX && adjacentY === wallY) {
+                                              return true; // The wall cell is adjacent to this owned token!
+                                          }
+                                      }
+                                  }
+                             }
+                        }
+                    }
+
+                    // If we checked all owned tokens and none were adjacent to this wall cell
+                    return false;
+                }
 
 			// Load Socket.IO client library dynamically
 			function loadSocketIO() {
@@ -1228,16 +1274,16 @@
                      maskDirty = true; // Mask needs to be rebuilt based on new visibility sets
                 }
 
-                // --- Build the Visibility Mask Canvas (Corrected Logic & Fixed Typos) ---
+                                // --- Build the Visibility Mask Canvas (Corrected Logic & Fixed Typos) ---
                 // This function creates a mask canvas where each pixel's alpha determines visual appearance:
-                // alpha = 0   -> Fully Visible (Bright Light OR Player's OWN Token Location)
+                // alpha = 0   -> Fully Visible (Bright Light OR Player's OWN Token Location OR Adjacent Wall)
                 // alpha = 0.6 -> Dimmed (Dim Light)
-                // alpha = 1   -> Solid Black Fog (Player Inherent Vision ALONE OR Not Visible at all)
+                // alpha = 1   -> Solid Black Fog (Not Visible at all OR Player Inherent Vision Alone)
                 function buildVisibilityMask() {
                      if (!maskDirty) return; // Only rebuild if necessary
 
                      const gridPixelWidth = currentGridWidthCells * gridSize;
-                     const gridPixelHeight = currentGridHeightCells * gridSize; // FIXED: Changed 'gridHeight' to 'gridSize'
+                     const gridPixelHeight = currentGridHeightCells * gridSize;
 
                      visibilityMaskCanvas.width = gridPixelWidth;
                      visibilityMaskCanvas.height = gridPixelHeight;
@@ -1266,6 +1312,19 @@
                                  maskOpacity = dimmingOpacity; // Semi-transparent in dim light
                              }
                              // Note: If the cell is only in playerVisionCells, maskOpacity remains the default 1 (solid fog).
+
+
+                             // --- START MODIFICATION ---
+                             // Check if this cell is a wall AND adjacent to an owned token
+                             // If so, make the mask transparent to reveal the underlying wall (drawn dimmed in drawGrid)
+                             // unless it's already brightly lit (which correctly sets maskOpacity to 0).
+                             if (maskOpacity > 0 && // Only modify if not already fully transparent (e.g., by bright light)
+                                 walls[y] && walls[y][x] === 1 &&
+                                 isAdjacentToOwnedPlayerToken(x, y, tokensData, username, currentRole))
+                             {
+                                 maskOpacity = 0; // Make the mask clear for adjacent walls
+                             }
+                             // --- END MODIFICATION ---
 
 
                              // Override mask opacity if this cell is occupied by the CURRENT PLAYER's token(s)
@@ -1298,6 +1357,7 @@
 
 
 								// --- Main Drawing Function ---
+								// --- Main Drawing Function ---
 				function drawGrid() {
 					// Prevent multiple redraw calls queued up
 					if (drawPending) return;
@@ -1314,8 +1374,8 @@
 						ctx.clearRect(0, 0, canvas.width, canvas.height);
 
 						// --- Apply Main Pan and Scale Transformations ---
-						// Save the current canvas state (the state *before* applying user pan and scale).
-						// This initial state is the identity transform and has no clipping path set.
+						// Save the canvas state *before* applying pan and scale.
+						// This saved state represents the identity transform and no clipping.
 						ctx.save();
 						ctx.translate(panX, panY); // Apply user pan (shifts the canvas origin)
 						ctx.scale(scale, scale); // Apply user zoom (scales subsequent drawing operations)
@@ -1360,7 +1420,7 @@
                                 drawHeight = drawWidth / imageAspectRatio;
                             }
 
-                            // Calculate the offset needed to center the scaled image within the grid area (0,0 to gridPixelWidth, gridPixelHeight).
+                            // Calculate offset to center the scaled image within the grid area (0,0 to gridPixelWidth, gridPixelHeight).
                             // If the image dimension is larger than the grid, the offset will be negative, positioning the image partially outside the clip area, which gets cropped.
                             offsetX = (gridPixelWidth - drawWidth) / 2;
                             offsetY = (gridPixelHeight - drawHeight) / 2;
@@ -1398,12 +1458,23 @@
 						}
 
                         // 3. Draw Walls (will be clipped)
-                        //    These are drawn after grid lines.
-                        let wallColor = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
-                        ctx.fillStyle = wallColor;
+                        //    These are drawn after grid lines, before tokens.
+                        // --- MODIFIED WALL DRAWING FOR ADJACENCY HIGHLIGHT ---
+                        let wallColorBase = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)'; // Standard wall color/opacity
+                        let wallColorAdjacent = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 255, 0.6)'; // Slightly less opaque for adjacent
+                        const isPlayer = currentRole === 'player';
+
                         for (let y = 0; y < currentGridHeightCells; y++) {
                             for (let x = 0; x < currentGridWidthCells; x++) {
                                 if (walls[y] && walls[y][x] === 1) {
+                                    // Determine color/opacity based on role and adjacency
+                                    let wallFillColor = wallColorBase;
+                                    if (isPlayer && isAdjacentToOwnedPlayerToken(x, y, tokensData, username, currentRole)) {
+                                        // Only highlight if it's a player and the wall is adjacent to their token(s)
+                                         wallFillColor = wallColorAdjacent;
+                                    }
+
+                                    ctx.fillStyle = wallFillColor;
                                     // Coordinates are relative to transformed origin (top-left of grid area)
                                     ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
                                 }
@@ -1466,7 +1537,7 @@
                             } else {
                                 const radius = width * 0.15;
                                 ctx.beginPath();
-                                ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, ctx + width, drawY + radius); // <-- CHECK THIS LINE, TYPO?
+                                ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
                                 ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
                                 ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
                                 ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
