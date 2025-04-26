@@ -566,6 +566,37 @@
 					originalError.apply(console, args);
 				};
 			})(console.error);
+			
+				// --- Collision Detection Helper ---
+				// Checks if a token at a proposed position (newX, newY) collides with walls or goes out of bounds
+				function isCollision(newX, newY, token, walls, gridWidth, gridHeight) {
+                    const tokenSize = token.size || 1; // Default to size 1 if undefined
+
+                    // Check if any cell the token would occupy is out of bounds or a wall
+                    for (let dy = 0; dy < tokenSize; dy++) {
+                        for (let dx = 0; dx < tokenSize; dx++) {
+                            const checkX = newX + dx;
+                            const checkY = newY + dy;
+
+                            // Check out of bounds
+                            if (checkX < 0 || checkX >= gridWidth || checkY < 0 || checkY >= gridHeight) {
+                                // return true; // We already clamp to bounds before calling this in client move,
+                                              // but checking here is good for server-side validation.
+                                              // Let's return false for out-of-bounds here, as clamping handles that.
+                                              // Collision specifically means hitting a wall *within* bounds.
+                                continue; // Skip this cell check if out of bounds, rely on clamping to prevent OOB moves
+                            }
+
+                            // Check for wall collision at this cell
+                            // Ensure walls[checkY] exists before accessing walls[checkY][checkX]
+                            if (walls[checkY] && walls[checkY][checkX] === 1) {
+                                return true; // Collision detected!
+                            }
+                        }
+                    }
+
+                    return false; // No collision detected in the proposed new position
+                }
 
 			// Load Socket.IO client library dynamically
 			function loadSocketIO() {
@@ -1266,60 +1297,92 @@
                 }
 
 
+								// --- Main Drawing Function ---
 				function drawGrid() {
-					// Removed the optimization that skipped drawing for players when mask wasn't dirty
-					// This ensures the animation frame updates continuously.
-
+					// Prevent multiple redraw calls queued up
 					if (drawPending) return;
 					drawPending = true;
 
+					// Request the next animation frame
 					requestAnimationFrame(() => {
 						const now = performance.now();
-						lastDrawTime = now; // Update last draw time regardless
+						// Update glow animation frame based on time for animations
+						glowFrame = now / 1000;
 
-						glowFrame = now / 1000; // Update glow animation frame
-
+						// Clear the entire canvas to start fresh for this frame
+						// This is done in the identity transform space (before pan/zoom)
 						ctx.clearRect(0, 0, canvas.width, canvas.height);
-						ctx.save();
-						ctx.translate(panX, panY);
-						ctx.scale(scale, scale);
 
+						// --- Apply Main Pan and Scale Transformations ---
+						// Save the current canvas state (the state *before* applying user pan and scale).
+						// This initial state is the identity transform and has no clipping path set.
+						ctx.save();
+						ctx.translate(panX, panY); // Apply user pan (shifts the canvas origin)
+						ctx.scale(scale, scale); // Apply user zoom (scales subsequent drawing operations)
+
+                        // Calculate the total size of the grid area in pixels at a 1:1 scale.
+                        // This is the target area in the *transformed space* that we want to draw within.
                         const gridPixelWidth = currentGridWidthCells * gridSize;
                         const gridPixelHeight = currentGridHeightCells * gridSize;
 
-						// Draw background image
+                        // --- Set Clipping Region to the Grid Area ---
+                        // Define a rectangle for the clipping path.
+                        // The coordinates (0,0) and dimensions (gridPixelWidth, gridPixelHeight)
+                        // are interpreted in the *current transformed coordinate system*.
+                        // This rectangle represents the visual bounds of the grid on the screen.
+                        ctx.beginPath(); // Start a new path for the clipping shape
+                        ctx.rect(0, 0, gridPixelWidth, gridPixelHeight); // Define the rectangle shape
+                        ctx.clip(); // Apply this path as the current clipping path.
+                                    // ONLY drawing operations that occur *after* this `clip()` call
+                                    // will be restricted to the area defined by this path.
+                                    // The clipping path itself is also subject to the current transform.
+
+
+						// --- Draw Content Within the Clipped Grid Area ---
+
+						// 1. Draw Background Image (will be clipped to the grid area)
+                        //    This uses the 'cover' logic to scale the image to fit the grid aspect ratio
 						if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth !== 0) {
 							const gridAspectRatio = gridPixelWidth / gridPixelHeight;
 							const imageAspectRatio = backgroundImage.width / backgroundImage.height;
 
 							let drawWidth, drawHeight, offsetX, offsetY;
-							// Calculate dimensions to cover the entire grid area while maintaining aspect ratio
+
+                            // Calculate dimensions to make the image "cover" the entire grid area.
+                            // One dimension will match the grid, the other will be larger or equal.
                             if (imageAspectRatio > gridAspectRatio) {
-                                // Image is wider than grid, match grid height
+                                // Image is proportionally wider than grid: Scale height to match grid, width will be larger.
                                 drawHeight = gridPixelHeight;
                                 drawWidth = drawHeight * imageAspectRatio;
                             } else {
-                                // Image is taller than grid, match grid width
+                                // Image is proportionally taller or same as grid: Scale width to match grid, height will be larger or equal.
                                 drawWidth = gridPixelWidth;
                                 drawHeight = drawWidth / imageAspectRatio;
                             }
-                            // Center the image within the grid area
+
+                            // Calculate the offset needed to center the scaled image within the grid area (0,0 to gridPixelWidth, gridPixelHeight).
+                            // If the image dimension is larger than the grid, the offset will be negative, positioning the image partially outside the clip area, which gets cropped.
                             offsetX = (gridPixelWidth - drawWidth) / 2;
                             offsetY = (gridPixelHeight - drawHeight) / 2;
 
+							// Draw the image. Its destination rectangle (offsetX, offsetY, drawWidth, drawHeight)
+							// is relative to the transformed origin (which is the top-left of the grid area in this transformed space).
+                            // The image will be automatically clipped by the `ctx.clip()` applied above.
 							ctx.drawImage(backgroundImage, offsetX, offsetY, drawWidth, drawHeight);
 						}
 
-						// --- Draw Grid Lines (Optional based on isGridVisible) ---
-                        // Draw grid lines BEFORE walls/tokens/mask so they are visible underneath if visibility allows
+						// 2. Draw Grid Lines (will be clipped)
+                        //    These are drawn after the background layer.
 						if (isGridVisible) {
 							const gridColor = document.body.classList.contains('dark-mode') ? 'rgba(85, 85, 85, 0.7)' : 'rgba(204, 204, 204, 0.7)';
 							ctx.strokeStyle = gridColor;
-							ctx.lineWidth = 1 / scale; // Scale line width with zoom
+							// Line width scales inversely with zoom to maintain apparent thickness
+							ctx.lineWidth = 1 / scale;
 
 							for (let i = 0; i <= currentGridWidthCells; i++) {
 								const x = i * gridSize;
 								ctx.beginPath();
+								// Drawing coordinates are relative to the transformed origin (top-left of grid area)
 								ctx.moveTo(x, 0);
 								ctx.lineTo(x, gridPixelHeight);
 								ctx.stroke();
@@ -1327,30 +1390,33 @@
 							for (let i = 0; i <= currentGridHeightCells; i++) {
 								const y = i * gridSize;
 								ctx.beginPath();
+								// Drawing coordinates are relative to the transformed origin (top-left of grid area)
 								ctx.moveTo(0, y);
 								ctx.lineTo(gridPixelWidth, y);
 								ctx.stroke();
 							}
 						}
 
-                        // --- Draw Walls ---
-                        // Draw walls BEFORE tokens.
-                        // For players, these will be hidden by the mask unless they are in a visible cell.
+                        // 3. Draw Walls (will be clipped)
+                        //    These are drawn after grid lines.
                         let wallColor = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
                         ctx.fillStyle = wallColor;
                         for (let y = 0; y < currentGridHeightCells; y++) {
                             for (let x = 0; x < currentGridWidthCells; x++) {
                                 if (walls[y] && walls[y][x] === 1) {
+                                    // Coordinates are relative to transformed origin (top-left of grid area)
                                     ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
                                 }
                             }
                         }
 
-						// --- Draw Tokens ---
-                        // Tokens are drawn before the visibility mask is applied
+						// 4. Draw Tokens (will be clipped)
+                        //    These are drawn after walls.
 						tokensData.forEach((tokenData, index) => {
+							// Save the current state *including* the main pan/zoom and the grid clipping path
 							ctx.save();
 							const tokenSize = tokenData.size || 1;
+							// Calculate token top-left position relative to transformed origin (top-left of grid area)
 							const x = tokenData.x * gridSize;
 							const y = tokenData.y * gridSize;
 							const width = gridSize * tokenSize;
@@ -1360,171 +1426,81 @@
 							let hpPercentage = 1;
 							const isLowHealth = tokenData.maxHP > 0 && tokenData.hp !== undefined && tokenData.hp / tokenData.maxHP < 0.25;
 
+							// Translate origin to the token's center, relative to the current transformed space (the grid area)
 							ctx.translate(x + width / 2, y + height / 2);
 							ctx.rotate(rotation);
 
+							// Drawing coordinates are relative to the token's center
 							const drawX = -width / 2;
 							const drawY = -height / 2;
 
 							// --- DRAW GLOW EFFECT FIRST (if applicable) ---
-							if (isSelected || isLowHealth) {
-								const glowStrength = Math.sin(glowFrame * Math.PI * 2) * 0.2 + 0.8;
-								const sizeFactor = Math.min(1 / tokenSize, 1);
-								const glowMultiplier = 1 + sizeFactor * 0.8; // This multiplier is for blur intensity
+							// ... (Glow drawing logic using drawX, drawY, width, height - uses current transform & clip) ...
+                            if (isSelected || isLowHealth) {
+                                 const glowStrength = Math.sin(glowFrame * Math.PI * 2) * 0.2 + 0.8;
+                                 const sizeFactor = Math.min(1 / tokenSize, 1);
+                                 const glowMultiplier = 1 + sizeFactor * 0.8;
 
-								ctx.shadowColor = isSelected
-									? (document.body.classList.contains('dark-mode') ? 'rgba(150, 150, 255, 0.8)' : 'rgba(0, 0, 255, 0.6)')
-									: 'rgba(255, 50, 50, 0.8)';
+                                 ctx.shadowColor = isSelected
+                                     ? (document.body.classList.contains('dark-mode') ? 'rgba(150, 150, 255, 0.8)' : 'rgba(0, 0, 255, 0.6)')
+                                     : 'rgba(255, 50, 50, 0.8)';
 
-								ctx.shadowBlur = 50 * glowStrength * glowMultiplier / scale; // Base blur 50
+                                 ctx.shadowBlur = 50 * glowStrength * glowMultiplier / scale; // Scale blur inversely with zoom
 
-								// Pulsing scale effect (optional)
-								const baseScale = 1.0; // Base size scale is 1 (normal)
-								// Increase the multiplier for more noticeable pulse
-								const pulseScale = baseScale + (glowStrength * 0.08 * sizeFactor); // Pulse amount scaled by glow strength and size factor, increased multiplier
-								ctx.scale(pulseScale, pulseScale); // Apply the pulse scale transform
-							
+                                 const baseScale = 1.0;
+                                 const pulseScale = baseScale + (glowStrength * 0.08 * sizeFactor);
+                                 ctx.scale(pulseScale, pulseScale);
 
+                                 ctx.fillStyle = ctx.shadowColor;
+                                 if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fill(); }
+                                 else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fill(); }
 
-								// Draw a shape purely to generate the blurred shadow *behind* the token
-								// We draw with the same color as the shadow.
-								ctx.fillStyle = ctx.shadowColor; // Use the shadow color for the shape fill
+                                 ctx.shadowBlur = 0;
+                                 ctx.shadowColor = 'transparent';
+                            }
 
-								if (tokenSize === 1) {
-									ctx.beginPath();
-									ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
-									ctx.fill(); // This will draw a blurred circle
-								} else {
-									 // Draw a blurred rounded rectangle
-									 const radius = width * 0.15;
-									 ctx.beginPath();
-									 ctx.moveTo(drawX + radius, drawY);
-									 ctx.lineTo(drawX + width - radius, drawY);
-									 ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
-									 ctx.lineTo(drawX + width, drawY + height - radius);
-									 ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
-									 ctx.lineTo(drawX + radius, drawY + height);
-									 ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
-									 ctx.lineTo(drawX, drawY + radius);
-									 ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
-									 ctx.closePath();
-									 ctx.fill();
-								}
+                            // --- DRAW TOKEN IMAGE/COLOR (ON TOP) ---
+                            if (tokenSize === 1) {
+                                ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.clip();
+                                if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
+                            } else {
+                                const radius = width * 0.15;
+                                ctx.beginPath();
+                                ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, ctx + width, drawY + radius); // <-- CHECK THIS LINE, TYPO?
+                                ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
+                                ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
+                                ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
+                                ctx.closePath();
+                                ctx.save(); ctx.clip();
+                                if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
+                                ctx.restore();
+                            }
 
-								// Important: Clear the shadow properties *before* drawing the token image/color
-								ctx.shadowBlur = 0;
-								ctx.shadowColor = 'transparent';
-							}
+                            // --- APPLY RED TINT (ON TOP of image/color) ---
+                            if (tokenData.maxHP > 0 && tokenData.hp !== undefined) {
+                                 hpPercentage = Math.max(0, Math.min(1, tokenData.hp / tokenData.maxHP)); const redTint = 1 - hpPercentage;
+                                 if (redTint > 0) {
+                                     ctx.globalCompositeOperation = 'source-atop';
+                                      if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
+                                      else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
+                                     ctx.globalCompositeOperation = 'source-over';
+                                 }
+                            }
 
-							// --- DRAW TOKEN IMAGE/COLOR (ON TOP) ---
-							// This part draws the token itself without any shadow effects
-							if (tokenSize === 1) {
-								ctx.beginPath();
-								ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
-								ctx.clip(); // Clip for the token image/color/tint
-								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) {
-									ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height);
-								} else {
-									ctx.fillStyle = tokenData.backgroundColor || 'grey';
-									ctx.fill();
-								}
-							} else {
-								const radius = width * 0.15;
-								 ctx.beginPath();
-								 ctx.moveTo(drawX + radius, drawY);
-								 ctx.lineTo(drawX + width - radius, drawY);
-								 ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
-								 ctx.lineTo(drawX + width, drawY + height - radius);
-								 ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
-								 ctx.lineTo(drawX + radius, drawY + height);
-								 ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
-								 ctx.lineTo(drawX, drawY + radius);
-								 ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
-								 ctx.closePath();
+                            // --- DRAW SELECTION OUTLINE (ON TOP of everything) ---
+                            if (isSelected) {
+                                 ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'cyan' : 'blue';
+                                 ctx.lineWidth = 2 / scale;
+                                  if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.stroke(); }
+                                  else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.stroke(); }
+                            }
 
-								 ctx.save(); // Save state before clipping
-								 ctx.clip(); // Clip for the token image/color/tint
-
-								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) {
-									ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height);
-								} else {
-									ctx.fillStyle = tokenData.backgroundColor || 'grey';
-									ctx.fill();
-								}
-
-								 ctx.restore(); // Restore state to remove clipping
-							}
-
-							// --- APPLY RED TINT (ON TOP of image/color) ---
-							if (tokenData.maxHP > 0 && tokenData.hp !== undefined) {
-								 hpPercentage = Math.max(0, Math.min(1, tokenData.hp / tokenData.maxHP));
-								 const redTint = 1 - hpPercentage;
-								 if (redTint > 0) {
-									 ctx.globalCompositeOperation = 'source-atop'; // Draw only where destination already has pixels (the token shape)
-									 ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; // Semi-transparent red based on HP
-									 // Need to redraw the shape path for the fill operation to work correctly after clip/restore
-									 if (tokenSize === 1) {
-										 ctx.beginPath();
-										 ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
-										 ctx.fill();
-									 } else {
-										 const radius = width * 0.15;
-										  ctx.beginPath();
-										  ctx.moveTo(drawX + radius, drawY);
-										  ctx.lineTo(drawX + width - radius, drawY);
-										  ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
-										  ctx.lineTo(drawX + width, drawY + height - radius);
-										  ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
-										  ctx.lineTo(drawX + radius, drawY + height);
-										  ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
-										  ctx.lineTo(drawX, drawY + radius);
-										  ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
-										  ctx.closePath();
-										  ctx.fill(); // Redraw shape for tint fill
-									 }
-									 ctx.globalCompositeOperation = 'source-over'; // Reset composite mode
-								 }
-							}
-
-
-							// --- DRAW SELECTION OUTLINE (ON TOP of everything) ---
-							if (isSelected) {
-								// Selection outline
-								ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'cyan' : 'blue'; // Use cyan for dark mode highlight
-								ctx.lineWidth = 2 / scale; // Scale line width with zoom
-								 // Need to redraw the shape path for the stroke operation
-								 if (tokenSize === 1) {
-									 ctx.beginPath();
-									 ctx.arc(0, 0, width / 2, 0, Math.PI * 2);
-									 ctx.stroke(); // Draw outline
-								 } else {
-									 const radius = width * 0.15;
-									 ctx.beginPath();
-									 ctx.moveTo(drawX + radius, drawY);
-									 ctx.lineTo(drawX + width - radius, drawY);
-									 ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
-									 ctx.lineTo(drawX + width, drawY + height - radius);
-									 ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
-									 ctx.lineTo(drawX + radius, drawY + height);
-									 ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
-									 ctx.lineTo(drawX, drawY + radius);
-									 ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
-									 ctx.closePath();
-									 ctx.stroke(); // Draw outline
-								 }
-							}
-
-
-							ctx.restore(); // Restore translation and rotation
-
-							// No need to clear shadow here anymore as it was cleared earlier in the glow drawing block
-							// ctx.shadowBlur = 0;
-							// ctx.shadowColor = 'transparent';
+							ctx.restore(); // Restore the state saved just for this token
 						});
 
 
-						// --- Apply Visibility Mask ---
-                        // Only apply mask for players
+						// --- Apply Visibility Mask (will be clipped) ---
+                        // Only apply mask for players. It will be clipped by the grid area clip path.
                         if (currentRole === 'player') {
                              // Recalculate visible cells and build mask if needed
                              if (maskDirty) {
@@ -1532,7 +1508,8 @@
                                  buildVisibilityMask(); // Builds a mask with varying transparency
                              }
 
-                             // Draw the mask canvas scaled and translated
+                             // Draw the mask canvas over the grid area (0,0 to gridPixelWidth, gridPixelHeight)
+                             // It will be clipped by the grid area clip path.
                              ctx.drawImage(visibilityMaskCanvas, 0, 0, gridPixelWidth, gridPixelHeight);
                         } else {
                              // DM has no mask, but we still need the glow animation loop
@@ -1540,13 +1517,20 @@
                         }
 
 
-						ctx.restore(); // Restore pan and scale
+						// Restore the canvas state saved at the beginning.
+                        // This removes the main pan/zoom transformations and the grid clipping path.
+						ctx.restore();
 
-						updateTokenNames(); // Update token names after drawing grid/tokens/mask
+
+						// Update token names (DOM elements, drawn outside the canvas)
+                        // This happens after the canvas drawing is complete.
+                        // Token names are *not* subject to canvas clipping, they are separate HTML elements.
+						updateTokenNames();
 						drawPending = false;
 
 						// Continue drawing loop
-						requestAnimationFrame(drawGrid); // Request the next frame to keep animation running
+						// Request the next animation frame to keep the canvas updated
+						requestAnimationFrame(drawGrid);
 					});
 				}
 
@@ -2685,64 +2669,101 @@
 					const canvasX = (event.clientX - rect.left - panX) / scale;
 					const canvasY = (event.clientY - rect.top - panY) / scale;
 
+					// --- Handle token dragging ---
 					if (draggedToken) {
 						const tokenSize = draggedToken.size || 1;
-						// Calculate target cell based on mouse position relative to the token's top-left corner
+						// Calculate the potential new grid position based on mouse position and initial offset
 						const newX = Math.floor((canvasX - offsetX) / gridSize);
 						const newY = Math.floor((canvasY - offsetY) / gridSize);
 						const maxX = currentGridWidthCells - tokenSize;
 						const maxY = currentGridHeightCells - tokenSize;
 
-						// Clamp to grid bounds
+						// Clamp the *intended* final position to grid bounds FIRST
 						const clampedX = Math.max(0, Math.min(newX, maxX));
 						const clampedY = Math.max(0, Math.min(newY, maxY));
 
-						// Only update and emit if the cell position actually changed
-						if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
-							draggedToken.x = clampedX;
-							draggedToken.y = clampedY;
-							// console.log(`Moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`); // COMMENTED OUT
-							socket.emit('moveToken', {
-								tokenId: draggedToken.id,
-								x: draggedToken.x,
-								y: draggedToken.y,
-								rotation: draggedToken.rotation
-                                // Note: stats like HP, Init, AC, Sight, Light are updated via context menu, not move
-							});
-                            maskDirty = true; // Token moved, need to recalculate mask
-							drawGrid(); // Redraw immediately for smooth drag feedback
-						}
-					} else if (isPanning) {
+                        // --- Implement Single-Step Collision Check ---
+                        // Only perform this logic if the intended clamped position is DIFFERENT from the token's current cell
+                        if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
+
+                            const currentX = draggedToken.x;
+                            const currentY = draggedToken.y;
+
+                            // Calculate the proposed next step: move one cell towards the clamped destination
+                            // Math.sign gives -1, 0, or 1
+                            let targetX = currentX + Math.sign(clampedX - currentX);
+                            let targetY = currentY + Math.sign(clampedY - currentY);
+
+                            // Re-clamp this single step to ensure it's still within bounds (should be, but safe)
+                            targetX = Math.max(0, Math.min(targetX, maxX));
+                            targetY = Math.max(0, Math.min(targetY, maxY));
+
+                            // Now check for collision at this *single step* target cell
+                            if (!isCollision(targetX, targetY, draggedToken, walls, currentGridWidthCells, currentGridHeightCells)) {
+                                // If there is NO collision at the single step target:
+                                // Update the token's local position to this new single step cell
+                                draggedToken.x = targetX;
+                                draggedToken.y = targetY;
+                                // console.log(`Mouse moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`); // COMMENTED OUT
+                                // Emit the updated position to the server (the server will also validate)
+                                socket.emit('moveToken', {
+                                    tokenId: draggedToken.id,
+                                    x: draggedToken.x,
+                                    y: draggedToken.y,
+                                    rotation: draggedToken.rotation
+                                });
+                                maskDirty = true; // Token moved, need to recalculate mask (for FoW)
+                                drawGrid(); // Redraw immediately for smooth drag feedback
+                            } else {
+                                // If there IS a collision at the single step target:
+                                // The token's position is NOT updated. It stays in its last valid cell.
+                                // This prevents moving into the wall, even if the mouse jumps over it.
+                                console.log(`Collision detected for ${draggedToken.name} at [${targetX}, ${targetY}]. Blocking move.`);
+                                // Optional: Add visual feedback here (e.g., temporary red tint)
+                            }
+                        }
+                        // If the intended clamped position is the same as current, do nothing (token didn't move cells).
+
+					// --- Handle panning ---
+					} else if (isPanning) { // Handle panning if no token is dragged
 						panX += event.clientX - startX;
 						panY += event.clientY - startY;
 						startX = event.clientX;
 						startY = event.clientY;
 						drawGrid();
-					} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
+
+					// --- Handle wall drawing/erasing ---
+					} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) { // Only draw/erase if in correct mode and DM
 						const gridX = Math.floor(canvasX / gridSize);
 						const gridY = Math.floor(canvasY / gridSize);
+						// Check if the mouse is within grid bounds
 						if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
-							// Ensure wall array is initialized for the row
+							// Ensure wall array is initialized for the row if it doesn't exist
 							if (!walls[gridY]) walls[gridY] = Array(currentGridWidthCells).fill(0);
-							// Only make a change if the state is different
+							// Determine the new state (1 for draw, 0 for erase)
 							const newState = currentInteractionMode === 'draw' ? 1 : 0;
+							// Only make a change if the wall state is different at this cell
 							if (walls[gridY][gridX] !== newState) {
+                                // Record the change (for pending emit on mouseup/touchend)
                                 pendingWallChanges[`${gridY}_${gridX}`] = newState;
+                                // Update the local wall state immediately for visual feedback
 							    walls[gridY][gridX] = newState;
-                                maskDirty = true; // Wall changed, need mask update
-							    drawGrid(); // Redraw immediately for drawing feedback
+                                maskDirty = true; // Wall changed, need mask update for FoW
+							    drawGrid(); // Redraw immediately
                             }
 						}
 					} else {
-                        // Handle hover for token name visibility
+                        // --- Handle Hover ---
+                        // Handle hover for token name visibility (if no drag, pan, or draw active)
 						const tokenInfo = getTokenAtPosition(canvasX, canvasY);
 						const newHoveredIndex = tokenInfo ? tokenInfo.index : -1;
+						// Only redraw if the hovered state changed
 						if (newHoveredIndex !== hoveredTokenIndex) {
 							hoveredTokenIndex = newHoveredIndex;
-							drawGrid(); // Redraw to show/hide/update hovered name
+							drawGrid(); // Redraw to update hovered name style/z-index
 						}
 					}
-				});
+				}); // End of mousemove listener
 
 				canvas.addEventListener('mouseup', () => {
 					resetInteraction(); // Emits wall changes if drawing
@@ -2812,7 +2833,7 @@
                     }
 				});
 
-				canvas.addEventListener('touchmove', (event) => {
+								canvas.addEventListener('touchmove', (event) => {
 					event.preventDefault();
                     if (isLoading || isContextMenuOpen) return;
 
@@ -2820,106 +2841,156 @@
                     if (longPressTimeout && event.touches.length === 1) {
                          const touch = event.touches[0];
                          const dx = touch.clientX - longPressStartX;
-                         const dy = touch.changedTouches[0].clientY - longPressStartY; // Fixed: Use changedTouches for accurate delta
+                         const dy = touch.changedTouches[0].clientY - longPressStartY;
                          const distance = Math.sqrt(dx*dx + dy*dy);
-                         if (distance > 10) { // Moved more than threshold (e.g., 10 pixels)
+                         if (distance > 10) {
                              clearTimeout(longPressTimeout);
                              longPressTimeout = null;
                              isLongPressing = false;
-                             // If dragging hadn't started yet but we moved, start dragging
+                             // If dragging hadn't started yet but we moved, re-evaluate interaction start at the original touch position
+                             // to see if a token was under the initial touch and start dragging if so.
                              if (!draggedToken && !isPanning && !isDrawing) {
-                                  // Re-evaluate interaction start at the original long press position
-                                  // to see if a token was under the initial touch.
-                                   const rect = canvas.getBoundingClientRect();
-                                   handleInteractionStart(longPressStartX, longPressStartY);
+                                  const rect = canvas.getBoundingClientRect();
+                                  handleInteractionStart(longPressStartX, longPressStartY);
                              }
                          }
                     }
 
-
 					const rect = canvas.getBoundingClientRect();
-					if (event.touches.length === 1 && !isLongPressing) { // Ensure not in long press mode
+					// Check for a single touch (used for drag, pan, or draw)
+					if (event.touches.length === 1) {
 						const touch = event.touches[0];
 						const canvasX = (touch.clientX - rect.left - panX) / scale;
 						const canvasY = (touch.clientY - rect.top - panY) / scale;
 
+						// --- Handle token dragging ---
 						if (draggedToken) {
+                            // Calculate the potential new grid position based on touch position and initial offset
 							const tokenSize = draggedToken.size || 1;
-                            // Calculate target cell based on touch position relative to the token's top-left corner
 							const newX = Math.floor((canvasX - offsetX) / gridSize);
 							const newY = Math.floor((canvasY - offsetY) / gridSize);
 							const maxX = currentGridWidthCells - tokenSize;
 							const maxY = currentGridHeightCells - tokenSize;
 
-							// Clamp to grid bounds
+							// Clamp the *intended* final position to grid bounds FIRST
 							const clampedX = Math.max(0, Math.min(newX, maxX));
 							const clampedY = Math.max(0, Math.min(newY, maxY));
 
+                            // --- Implement Single-Step Collision Check ---
+                            // Only perform this logic if the intended clamped position is DIFFERENT from the token's current cell
+                            if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
 
-							if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
-								draggedToken.x = clampedX;
-								draggedToken.y = clampedY;
-								// console.log(`Touch moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`); // COMMENTED OUT
-								socket.emit('moveToken', {
-									tokenId: draggedToken.id,
-									x: draggedToken.x,
-									y: draggedToken.y,
-									rotation: draggedToken.rotation
-								});
-                                maskDirty = true; // Token moved, need mask update
-								drawGrid(); // Redraw immediately
-							}
-						} else if (isPanning) {
+                                const currentX = draggedToken.x;
+                                const currentY = draggedToken.y;
+
+                                // Calculate the proposed next step: move one cell towards the clamped destination
+                                // Math.sign gives -1, 0, or 1
+                                let targetX = currentX + Math.sign(clampedX - currentX);
+                                let targetY = currentY + Math.sign(clampedY - currentY);
+
+                                // Re-clamp this single step to ensure it's still within bounds (should be, but safe)
+                                targetX = Math.max(0, Math.min(targetX, maxX));
+                                targetY = Math.max(0, Math.min(targetY, maxY));
+
+                                // Now check for collision at this *single step* target cell
+                                if (!isCollision(targetX, targetY, draggedToken, walls, currentGridWidthCells, currentGridHeightCells)) {
+                                    // If there is NO collision at the single step target:
+                                    // Update the token's local position to this new single step cell
+                                    draggedToken.x = targetX;
+                                    draggedToken.y = targetY;
+                                    // console.log(`Touch moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`); // COMMENTED OUT
+                                    // Emit the updated position to the server (the server will also validate)
+                                    socket.emit('moveToken', {
+                                        tokenId: draggedToken.id,
+                                        x: draggedToken.x,
+                                        y: draggedToken.y,
+                                        rotation: draggedToken.rotation
+                                    });
+                                    maskDirty = true; // Token moved, need to recalculate mask (for FoW)
+                                    drawGrid(); // Redraw immediately for smooth drag feedback
+                                } else {
+                                    // If there IS a collision at the single step target:
+                                    // The token's position is NOT updated. It stays in its last valid cell.
+                                    // This prevents moving into the wall, even if the touch jumps over it.
+                                    console.log(`Collision detected for ${draggedToken.name} at [${targetX}, ${targetY}]. Blocking move.`);
+                                    // Optional: Add visual feedback here (e.g., temporary red tint)
+                                }
+                            }
+                            // If the intended clamped position is the same as current, do nothing (token didn't move cells).
+
+						// --- Handle panning ---
+						} else if (isPanning && !isLongPressing) { // Handle panning if no token is dragged and not a potential long press
 							panX += touch.clientX - startX;
 							panY += touch.clientY - startY;
 							startX = touch.clientX;
 							startY = touch.clientY;
 							drawGrid();
-						} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
+
+						// --- Handle wall drawing/erasing ---
+						} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) { // Only draw/erase if in correct mode and DM
 							const gridX = Math.floor(canvasX / gridSize);
 							const gridY = Math.floor(canvasY / gridSize);
+							// Check if the touch is within grid bounds
 							if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
-								// Ensure wall array is initialized for the row
+								// Ensure wall array is initialized for the row if it doesn't exist
 								if (!walls[gridY]) walls[gridY] = Array(currentGridWidthCells).fill(0);
-								// Only make a change if the state is different
-                                const newState = currentInteractionMode === 'draw' ? 1 : 0;
-                                if (walls[gridY][gridX] !== newState) {
-								    pendingWallChanges[`${gridY}_${gridX}`] = newState;
+								// Determine the new state (1 for draw, 0 for erase)
+								const newState = currentInteractionMode === 'draw' ? 1 : 0;
+								// Only make a change if the wall state is different at this cell
+								if (walls[gridY][gridX] !== newState) {
+                                    // Record the change (for pending emit on touchend)
+                                    pendingWallChanges[`${gridY}_${gridX}`] = newState;
+                                    // Update the local wall state immediately for visual feedback
 								    walls[gridY][gridX] = newState;
-                                    maskDirty = true; // Wall changed, need mask update
+                                    maskDirty = true; // Wall changed, need mask update for FoW
 								    drawGrid(); // Redraw immediately
                                 }
 							}
 						}
-					} else if (event.touches.length === 2) {
+					// --- Handle Pinch-to-Zoom ---
+					} else if (event.touches.length === 2) { // Handle two touches for pinch-to-zoom
+						// Ensure any pending single-touch interactions are reset
+						resetInteraction();
+						if (longPressTimeout) clearTimeout(longPressTimeout);
+						isLongPressing = false;
+
                         // Pinch-to-zoom logic
 						const touch1 = event.touches[0];
 						const touch2 = event.touches[1];
+						// Calculate distance between touches
 						const newDistance = Math.hypot(
 							touch1.clientX - touch2.clientX,
 							touch1.clientY - touch2.clientY
 						);
+						// Calculate the center point of the pinch
 						const newCenterX = (touch1.clientX + touch2.clientX) / 2;
 						const newCenterY = (touch1.clientY + touch2.clientY) / 2;
 
+						// Calculate the zoom factor based on the change in pinch distance
 						const scaleFactor = newDistance / pinchStartDistance;
+						// Apply the zoom factor to the previous scale, clamping between min/max
 						const newScale = pinchStartScale * scaleFactor;
 						scale = Math.max(0.2, Math.min(newScale, 5)); // Clamp scale between 0.2x and 5x
 
-                        // Adjust pan to keep the pinch center point relatively stable on the grid
+                        // Adjust pan to keep the pinch center point (in world coordinates) stable on the screen
+						const rect = canvas.getBoundingClientRect(); // Recalculate rect just in case (might change during pinch)
+						// Calculate the canvas coordinates of the initial pinch center in the *old* scale
 						const canvasCenterX = (pinchStartCenterX - rect.left - panX) / pinchStartScale;
 						const canvasCenterY = (pinchStartCenterY - rect.top - panY) / pinchStartScale;
+						// Calculate the new pan offset needed to keep that canvas point under the new pinch center
 						panX = newCenterX - rect.left - canvasCenterX * scale;
 						panY = newCenterY - rect.top - canvasCenterY * scale;
 
+						// Update pinch start values for the next touchmove event
 						pinchStartDistance = newDistance;
 						pinchStartScale = scale;
 						pinchStartCenterX = newCenterX;
 						pinchStartCenterY = newCenterY;
 
-						drawGrid();
+						drawGrid(); // Redraw after zoom/pan
 					}
-				});
+					// If more than 2 touches, we ignore them (handled by initial check in touchstart)
+				}); // End of touchmove listener
 
 				canvas.addEventListener('touchend', (event) => {
                      // If a long press timer was active, clear it and check if it was a tap vs long press

@@ -31,6 +31,37 @@ const io = socketIo(server, {
     transports: ['websocket', 'polling']
 });
 
+				// --- Collision Detection Helper ---
+                // Checks if a token at a proposed position (newX, newY) collides with walls or goes out of bounds
+                function isCollision(newX, newY, token, walls, gridWidth, gridHeight) {
+                    const tokenSize = token.size || 1; // Default to size 1 if undefined
+
+                    // Check if any cell the token would occupy is out of bounds or a wall
+                    for (let dy = 0; dy < tokenSize; dy++) {
+                        for (let dx = 0; dx < tokenSize; dx++) {
+                            const checkX = newX + dx;
+                            const checkY = newY + dy;
+
+                            // Check out of bounds
+                            if (checkX < 0 || checkX >= gridWidth || checkY < 0 || checkY >= gridHeight) {
+                                // return true; // We already clamp to bounds before calling this in client move,
+                                              // but checking here is good for server-side validation.
+                                              // Let's return false for out-of-bounds here, as clamping handles that.
+                                              // Collision specifically means hitting a wall *within* bounds.
+                                continue; // Skip this cell check if out of bounds, rely on clamping to prevent OOB moves
+                            }
+
+                            // Check for wall collision at this cell
+                            // Ensure walls[checkY] exists before accessing walls[checkY][checkX]
+                            if (walls[checkY] && walls[checkY][checkX] === 1) {
+                                return true; // Collision detected!
+                            }
+                        }
+                    }
+
+                    return false; // No collision detected in the proposed new position
+                }
+
 // Serve static files from 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -369,30 +400,61 @@ io.on('connection', (socket) => {
         // Check if token exists AND if user is DM OR owns/parents the token
         if (token && (role === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username))) {
             // Ensure position and rotation are valid numbers
-            const newX = Number.isFinite(x) ? Number(x) : token.x;
-            const newY = Number.isFinite(y) ? Number(y) : token.y;
+            const requestedX = Number.isFinite(x) ? Number(x) : token.x; // Client's requested X
+            const requestedY = Number.isFinite(y) ? Number(y) : token.y; // Client's requested Y
             const newRotation = Number.isFinite(rotation) ? Number(rotation) % 360 : token.rotation;
 
-            // Server-side validation for position bounds
+            // --- SERVER-SIDE SINGLE-STEP & COLLISION CHECK ---
+            // Calculate the target cell based on one step from the token's *current* server position
+            // towards the client's *requested* position.
+            const currentX = token.x;
+            const currentY = token.y;
+
+            // Determine the direction of the client's request relative to the server's current position
+            // Use Math.sign to get -1, 0, or 1 indicating the step direction
+            const stepX = Math.sign(requestedX - currentX);
+            const stepY = Math.sign(requestedY - currentY);
+
+            // Calculate the proposed server-side target cell (one step from current)
+            let serverTargetX = currentX + stepX;
+            let serverTargetY = currentY + stepY;
+
+            // Server-side clamping of the single step to grid bounds
             const tokenSize = token.size || 1;
             const maxX = gameState.gridSize.width - tokenSize;
             const maxY = gameState.gridSize.height - tokenSize;
-            const clampedX = Math.max(0, Math.min(newX, maxX));
-            const clampedY = Math.max(0, Math.min(newY, maxY));
+            serverTargetX = Math.max(0, Math.min(serverTargetX, maxX));
+            serverTargetY = Math.max(0, Math.min(serverTargetY, maxY));
 
+            // Only perform collision check if the target cell is different from the current cell
+            if (token.x !== serverTargetX || token.y !== serverTargetY) {
+                // Check for collision at the proposed single step target cell
+                if (isCollision(serverTargetX, serverTargetY, token, gameState.walls, gameState.gridSize.width, gameState.gridSize.height)) {
+                    // If there IS a collision, log it and DO NOT update state or broadcast
+                    console.log(`Server: Collision detected for token ${tokenId} ("${token.name}") at [${serverTargetX}, ${serverTargetY}]. Move blocked.`);
+                    // Optional: Notify the specific client if their move was blocked by server validation
+                    // This might be needed if client-side collision was somehow bypassed or they are cheating.
+                    // socket.emit('moveBlocked', { tokenId: tokenId, x: token.x, y: token.y }); // Tell client to revert to previous server-confirmed position
+                    return; // Stop processing this move request
+                }
+            }
+            // If we reach here, the single step move is valid (or client requested no change)
 
-            // Only update if position or rotation actually changed
-            if (token.x !== clampedX || token.y !== clampedY || token.rotation !== newRotation) {
-                token.x = clampedX;
-                token.y = clampedY;
-                token.rotation = newRotation;
-                // console.log(`Token moved: "${token.name}" (ID: ${tokenId}) to [${token.x}, ${token.y}], Rot: ${token.rotation}`); // COMMENTED OUT THIS LINE
-                io.emit('updateTokens', gameState.tokens); // Broadcast the updated list of tokens
+            // Update token position on the server state to the valid single step target
+            // Only update if position or rotation actually changed from the *original* server state
+            // Check against the original token.x/y just to avoid unnecessary updates if the single-step didn't move it.
+            if (token.x !== serverTargetX || token.y !== serverTargetY || token.rotation !== newRotation) {
+                token.x = serverTargetX; // Update to the validated single step
+                token.y = serverTargetY; // Update to the validated single step
+                token.rotation = newRotation; // Update rotation (client sends this regardless of move)
+                // console.log(`Server: Token moved: "${token.name}" (ID: ${tokenId}) to [${token.x}, ${token.y}], Rot: ${token.rotation}`); // COMMENTED OUT
+                io.emit('updateTokens', gameState.tokens); // Broadcast the updated list of tokens to ALL clients
                 saveStateDebounced(); // Auto-save state after change
             }
+
         } else {
              // Optional: Log unauthorized move attempts
-             // console.warn(`Client ${socket.id} attempted unauthorized move of token ${tokenId}.`);
+             // console.warn(`Server: Client ${socket.id} attempted unauthorized move of token ${tokenId}.`);
         }
     });
 
