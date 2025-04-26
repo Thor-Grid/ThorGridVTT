@@ -32,6 +32,7 @@
             background-color: rgba(0, 0, 0, 0.7);
             color: white;
             padding: 3px 8px;
+            padding-bottom: 3px; /* <--- Add this line (adjust value as needed) */
             border-radius: 4px;
             font-size: 16px;
             font-family: Arial, sans-serif;
@@ -1636,18 +1637,20 @@
                         (currentRole === 'dm' || // DM sees all names
                          importantToken.owner === username || // Owned tokens' names are always visible to owner
                          (importantToken.isMinion && importantToken.parentOwner === username) || // Owned minions' names visible to parent owner
-                         isTokenInBrightLight(importantToken)) // Non-owned token name visible ONLY if in bright light
+                         isTokenKnowable(importantToken)) // Also show name if any part is knowable (in bright/dim light or vision)
                         : false;
 
 
                     if (importantToken && isImportantTokenNameVisible) {
                          const tokenSize = importantToken.size || 1;
                          // Position name centered horizontally above the token's center X
-                         const canvasX = importantToken.x * gridSize + (gridSize * tokenSize) / 2;
-                         const canvasY = importantToken.y * gridSize; // Top Y of token bbox
-                         const screenX = canvasX * scale + panX;
-                         const screenY = canvasY * scale + panY;
-                         visibleNames.push({ tokenData: importantToken, screenX, screenY, priority: 2 });
+                         const canvasX_center = (importantToken.x + tokenSize / 2) * gridSize; // Canvas X center of the token
+                         const canvasY_top = importantToken.y * gridSize; // Canvas Y top of the token bounding box
+
+                         const screenX_center = canvasX_center * scale + panX;
+                         const screenY_top = canvasY_top * scale + panY;
+
+                         visibleNames.push({ tokenData: importantToken, screenX: screenX_center, screenY_top: screenY_top, priority: 2 }); // Store screenX as center, screenY_top as top
                     }
 
 
@@ -1662,50 +1665,67 @@
                             if (currentRole === 'dm') {
                                 isNameVisible = true; // DM sees all names
                             } else {
-                                // Player sees name if owned OR if token is in bright light
+                                // Player sees name if owned OR if token is knowable
                                 const isOwned = tokenData.owner === username || (tokenData.isMinion && tokenData.parentOwner === username);
-                                const isInBright = isTokenInBrightLight(tokenData);
-                                isNameVisible = isOwned || isInBright;
+                                const isAnyPartKnowable = isTokenKnowable(tokenData); // Check if any part is knowable
+                                isNameVisible = isOwned || isAnyPartKnowable; // Show name if owned OR knowable
                             }
 
 
 							if (isNameVisible) {
-                                // Calculate screen position
+                                // Calculate screen position - use token center X and token top Y
                                 const tokenSize = tokenData.size || 1;
-                                const canvasX = tokenData.x * gridSize + (gridSize * tokenSize) / 2;
-                                const canvasY = tokenData.y * gridSize; // Top Y of token bbox
-                                const screenX = canvasX * scale + panX;
-                                const screenY = canvasY * scale + panY;
+                                const canvasX_center = (tokenData.x + tokenSize / 2) * gridSize; // Canvas X center of the token
+                                const canvasY_top = tokenData.y * gridSize; // Canvas Y top of the token bounding box
 
+                                const screenX_center = canvasX_center * scale + panX;
+                                const screenY_top = canvasY_top * scale + panY;
 
-                                let canShow = true;
                                 // Check for overlap with names already chosen for display
+                                // A simpler overlap check based on the token's center distance, scaled by zoom:
+                                let canShow = true;
                                 for (const visible of visibleNames) {
-                                    const dx = screenX - visible.screenX;
-                                    const dy = screenY - visible.screenY;
-                                    const distance = Math.sqrt(dx * dx + dy * dy);
-                                    if (distance < minDistance) {
-                                        canShow = false;
-                                        break;
-                                    }
+                                     const dx = screenX_center - visible.screenX;
+                                     const dy = screenY_top - visible.screenY_top;
+                                     const distance = Math.sqrt(dx * dx + dy * dy);
+                                     // Scale the minimum distance based on zoom level so closer tokens are more likely to show names zoomed out
+                                     if (distance * scale < minDistance) {
+                                         canShow = false;
+                                         break;
+                                     }
                                 }
 
                                 if (canShow) {
-                                    visibleNames.push({ tokenData, screenX, screenY, priority: 0 });
+                                    visibleNames.push({ tokenData, screenX: screenX_center, screenY_top: screenY_top, priority: 0 }); // Store screenX as center, screenY_top as top
                                 }
 							}
 						});
 					}
 
-					// Sort by priority to ensure important names are rendered first
-                    visibleNames.sort((a, b) => b.priority - a.priority);
+					// --- CORRECTED SORTING LOGIC ---
+                    // Sort the names before creating and appending the divs.
+                    // Primary sort: Priority (hovered/dragged on top - zIndex 100 vs 10)
+                    // Secondary sort: Screen Y position descending (labels for lower tokens draw on top)
+                    // Tertiary sort: Screen X position ascending (labels for lefter tokens draw behind righter)
+                    visibleNames.sort((a, b) => {
+                        // Primary sort: Priority (hovered/dragged highest)
+                        if (b.priority !== a.priority) {
+                            return b.priority - a.priority;
+                        }
+                        // Secondary sort: Screen Y position (descending, so lower elements appear later/on top in DOM)
+                        if (b.screenY_top !== a.screenY_top) {
+                             return b.screenY_top - a.screenY_top;
+                        }
+                        // Tertiary sort: Screen X position (ascending, so lefter elements appear earlier/behind)
+                         return a.screenX - b.screenX;
+                    });
 
 
-					visibleNames.forEach(({ tokenData, screenX, screenY }) => {
+					visibleNames.forEach(({ tokenData, screenX, screenY_top }) => {
 						const nameDiv = document.createElement('div');
 						nameDiv.classList.add('token-name');
 						if (currentRole === 'dm') {
-							const hpDisplay = tokenData.maxHP > 0 && tokenData.hp !== undefined ? `${tokenData.hp}/${tokenData.maxHP}` : (tokenData.hp !== undefined ? tokenData.hp : '--/--'); // Show '--/--' if maxHP is 0 or hp undefined
+							const hpDisplay = tokenData.maxHP > 0 && tokenData.hp !== undefined ? `${tokenData.hp}/${tokenData.maxHP}` : (tokenData.hp !== undefined ? tokenData.hp : '--/--');
 							const initDisplay = tokenData.initiative !== undefined ? tokenData.initiative : '--';
                             const acDisplay = tokenData.ac !== undefined ? tokenData.ac : '--';
 							const sightDisplay = `Sight: ${tokenData.sightRadius || 0}`;
@@ -1720,30 +1740,33 @@
 
 						} else {
                             // For players, just show the name (no stats in the name tag)
-							nameDiv.textContent = tokenData.name; // FIXED: Removed Init and AC from player name tag
+							nameDiv.textContent = tokenData.name; // This is just the name for players
 						}
 						nameDiv.dataset.tokenId = tokenData.id;
 
-                        // Append first to measure
+                        // Append first to measure (necessary to get offsetWidth/offsetHeight)
                         document.body.appendChild(nameDiv);
 
-						// Adjust position above the top-left corner of the token's main square
-                         const tokenTopLeftY_screen = tokenData.y * gridSize * scale + panY;
-                         const nameHeight = nameDiv.offsetHeight; // Get height after setting content
-                         const nameWidth = nameDiv.offsetWidth;
-
-                         // Position centered horizontally above the token's center
-                         const tokenCenterX_screen = (tokenData.x + (tokenData.size || 1) / 2) * gridSize * scale + panX;
-                         nameDiv.style.left = `${tokenCenterX_screen - (nameWidth / 2)}px`;
-                         nameDiv.style.top = `${tokenTopLeftY_screen - nameHeight - 5}px`; // 5px padding above token
+						// --- CORRECTED POSITIONING LOGIC ---
+                        // Set left to the token's screen center X
+                         nameDiv.style.left = `${screenX}px`;
+                        // Set top to the token's screen top Y minus a small offset.
+                        // The CSS transform translate(-50%, -100%) will then correctly
+                        // position the name's bottom-center at (screenX, screenY_top - 5).
+                         nameDiv.style.top = `${screenY_top - 5}px`; // 5px padding above token
 
 
 						// Check if this specific nameDiv's token is hovered or dragged based on original index
 						const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
-						if (originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex) {
-							nameDiv.classList.add('hovered');
+						const isSelected = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
+
+						// --- ADD Z-INDEX LOGIC (REMAINS THE SAME) ---
+						nameDiv.style.zIndex = '10'; // Base z-index below controls (11)
+						if (isSelected) {
+							nameDiv.classList.add('hovered'); // Add hover style class
+							nameDiv.style.zIndex = '100'; // Bring selected/hovered name to front (above other names)
 						} else {
-							nameDiv.style.opacity = '0.7';
+							nameDiv.style.opacity = '0.7'; // Dim non-hovered names
 						}
 					});
 				}
@@ -1834,14 +1857,16 @@
 				}
 
 								// --- Context Menu Logic ---
+								// --- Context Menu Logic ---
 				function showContextMenu(clientX, clientY, tokenIndex) {
 					// Remove any existing context menus
 					document.querySelectorAll('.token-context-menu').forEach(m => m.remove());
-					isContextMenuOpen = true; // Set flag
+					// isContextMenuOpen is set to true later, after the menu is added
 
 					const menu = document.createElement('div');
 					menu.classList.add('token-context-menu');
 					// Position the menu - ensure it doesn't go offscreen (basic check)
+					// Initial position before size check
 					let menuX = clientX;
 					let menuY = clientY;
 
@@ -1866,8 +1891,7 @@
 
 					const token = tokensData[tokenIndex];
                     if (!token) {
-                         // Should not happen if index is valid, but defensive check
-                         isContextMenuOpen = false;
+                         isContextMenuOpen = false; // Reset flag if token not found
                          return;
                     }
 
@@ -1891,16 +1915,16 @@
 							</div>
                             <div style="display: flex; align-items: center; gap: 6px;">
                                 <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Is Light Source:</label>
-                                <input type="checkbox" class="light-source-checkbox" ${token.isLightSource ? 'checked' : ''} style="flex-grow: 1;">
+                                <input type="checkbox" id="context-isLightSource" class="light-source-checkbox" ${token.isLightSource ? 'checked' : ''} style="flex-grow: 1;">
                             </div>
                             <div class="light-range-inputs" style="display: ${token.isLightSource ? 'flex' : 'none'}; flex-direction: column; gap: 6px; padding-left: 10px; border-left: 1px solid #ccc;">
                                 <div style="display: flex; align-items: center; gap: 6px;">
                                      <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Bright:</label>
-                                     <input type="number" class="bright-range-input" value="${token.brightRange || 0}" min="0" style="flex-grow: 1; padding: 4px;">
+                                     <input type="number" id="context-bright-range" class="bright-range-input" value="${token.brightRange || 0}" min="0" style="flex-grow: 1; padding: 4px;">
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 6px;">
                                      <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Dim:</label>
-                                     <input type="number" class="dim-range-input" value="${token.dimRange || 0}" min="0" style="flex-grow: 1; padding: 4px;">
+                                     <input type="number" id="context-dim-range" class="dim-range-input" value="${token.dimRange || 0}" min="0" style="flex-grow: 1; padding: 4px;">
                                 </div>
                             </div>
 							<div style="display: flex; align-items: center; gap: 6px;">
@@ -1922,7 +1946,7 @@
 						`;
 
 					} else if (token.owner === username || (token.isMinion && token.parentOwner === username)) {
-						// Player owns token - Add player-editable fields (Rotate) and viewable (Sight, Light)
+						// Player owns token - Add player-editable fields (Rotate) and viewable (Sight, Light, HP, Init, AC)
 						menuHTML += `
 							<div style="display: flex; align-items: center; gap: 6px;">
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Rotate:</label>
@@ -1936,7 +1960,20 @@
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
                                  <div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 							</div>
-                            <!-- Optional: Add player-editable HP/Init here if desired -->
+                            <!-- Add read-only HP, Init, and AC displays for player-owned tokens -->
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">HP:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.maxHP > 0 && token.hp !== undefined ? `${token.hp}/${token.maxHP}` : (token.hp !== undefined ? token.hp : '--/--')}</div>
+                             </div>
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.initiative !== undefined ? token.initiative : '--'}</div>
+                             </div>
+                             <div style="display: flex; align-items: center; gap: 6px;">
+                                <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
+                                <div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
+                             </div>
+                             <!-- Optional: Add player-editable HP/Init here if desired. Uncomment and update Save logic below. -->
                              <!--
                              <div style="display: flex; align-items: center; gap: 6px;">
                                 <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Cur HP:</label>
@@ -1950,15 +1987,15 @@
 						`;
 
 					} else {
-                        // Player does not own token - Add read-only info
-                        menuHTML += `
+                        // Player does not own token - Add name and read-only info (Light, maybe HP/Init/AC)
+                        // For non-owned tokens, let's add read-only HP, Init, and AC too, as they are combat relevant
+                         menuHTML += `
                             <div style="font-size: 0.9em; padding: 6px; text-align: center;">(You don't own this token)</div>
                              <div style="display: flex; align-items: center; gap: 6px;">
 								<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
                                  <div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 							</div>
-                            <!-- Optional: Add read-only displays for HP/Init/AC here if needed for non-owned -->
-                             <!--
+                            <!-- Add read-only displays for HP/Init/AC for non-owned tokens -->
                              <div style="display: flex; align-items: center; gap: 6px;">
                                 <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">HP:</label>
                                 <div style="flex-grow: 1; font-size: 0.9em;">${token.maxHP > 0 && token.hp !== undefined ? `${token.hp}/${token.maxHP}` : (token.hp !== undefined ? token.hp : '--/--')}</div>
@@ -1971,7 +2008,6 @@
                                 <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
                                 <div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
                              </div>
-                             -->
                         `;
                     }
 
@@ -2011,12 +2047,25 @@
 
 
                     // Add listener for Light Source checkbox to show/hide range inputs (DM only)
-					const lightSourceCheckbox = menu.querySelector('.light-source-checkbox');
+                    // Query using the ID added to the input in the DM menuHTML
+					const lightSourceCheckbox = menu.querySelector('#context-isLightSource'); // Use ID
+					// Also query the bright/dim inputs here for the change listener
+					const brightRangeInputForListener = menu.querySelector('#context-bright-range');
+					const dimRangeInputForListener = menu.querySelector('#context-dim-range');
+
+					// The lightRangeInputsDiv itself is queried by class as it's the container div
 					const lightRangeInputsDiv = menu.querySelector('.light-range-inputs');
+
 					// This check implicitly only runs for DM menus because only DM menus have the checkbox/div
-					if (lightSourceCheckbox && lightRangeInputsDiv) {
+					if (lightSourceCheckbox && lightRangeInputsDiv && brightRangeInputForListener && dimRangeInputForListener) {
 						lightSourceCheckbox.addEventListener('change', () => {
-							lightRangeInputsDiv.style.display = lightSourceCheckbox.checked ? 'flex' : 'none';
+							const isChecked = lightSourceCheckbox.checked;
+							lightRangeInputsDiv.style.display = isChecked ? 'flex' : 'none';
+							// Optional: Clear values when unchecked
+							if (!isChecked) {
+								brightRangeInputForListener.value = '0';
+								dimRangeInputForListener.value = '0';
+							}
 						});
 						// No need to set initial state here, it's set in the menuHTML string based on token data
 					}
@@ -2034,12 +2083,11 @@
 					}
 
                     // Listener for the Save button (DM or Player Owner)
-										const saveButton = menu.querySelector('.save-button');
-					if (saveButton) {
+					const saveButton = menu.querySelector('.save-button');
+					if (saveButton) { // This implicitly checks for DM or Player Owner existence because those are the only roles with this button
 						saveButton.addEventListener('click', (e) => {
-							e.stopPropagation(); // Prevent click from bubbling and closing menu immediately
+							e.stopPropagation();
 
-                            // Always query the rotate input, as it appears in both DM and Player menus
 							const rotateInput = menu.querySelector('.rotate-input');
 							let rotation = rotateInput ? parseInt(rotateInput.value, 10) % 360 : token.rotation;
 							if (isNaN(rotation)) rotation = token.rotation || 0;
@@ -2047,59 +2095,42 @@
 							// Start building the update object - always include tokenId and rotation
 							let statsToUpdate = { tokenId: token.id, rotation: rotation };
 
-                            // Query for other potential inputs ONLY if they might exist in the menu
-                            // These queries must happen *inside* the click listener because the menu is created dynamically
-                            const maxHPInput = menu.querySelector('.max-hp-input');       // Only in DM menu HTML
-                            const hpInput = menu.querySelector('.hp-input');             // Only in DM menu HTML (unless uncommented for player)
-                            const initInput = menu.querySelector('.init-input');           // Only in DM menu HTML (unless uncommented for player)
-                            const acInput = menu.querySelector('.ac-input');             // Only in DM menu HTML
-                            const sightInput = menu.querySelector('.sight-input');         // Only in DM menu HTML
-                            const lightSourceCheckbox = menu.querySelector('.light-source-checkbox'); // Only in DM menu HTML
-                            const brightRangeInput = menu.querySelector('.bright-range-input'); // Only in DM menu HTML
-                            const dimRangeInput = menu.querySelector('.dim-range-input');       // Only in DM menu HTML (corrected typo .dim-range-inputs -> .dim-range-input)
+                            // Query all possible inputs that could exist in the menu, regardless of role.
+                            // Their values will only be used if the role allows it and the input element exists.
+                            const maxHPInput = menu.querySelector('.max-hp-input');       // DM only
+                            const hpInput = menu.querySelector('.hp-input');             // DM (or Player if uncommented)
+                            const initInput = menu.querySelector('.init-input');           // DM (or Player if uncommented)
+                            const acInput = menu.querySelector('.ac-input');             // DM only
+                            const sightInput = menu.querySelector('.sight-input');         // DM only
+                            const lightSourceCheckboxForSave = menu.querySelector('#context-isLightSource'); // DM only (Use the ID)
+                            const brightRangeInputForSave = menu.querySelector('#context-bright-range');     // DM only (Use the ID)
+                            const dimRangeInputForSave = menu.querySelector('#context-dim-range');         // DM only (Use the ID)
 
 
-							// Only include DM-specific fields if the user is a DM
-							if (currentRole === 'dm') {
-								// Use the queried elements to get values if they exist (only exist for DM HTML)
-                                // Use token.property as fallback if input is missing or value is not finite
-								statsToUpdate.maxHP = maxHPInput ? parseInt(maxHPInput.value, 10) || 0 : token.maxHP;
-								statsToUpdate.hp = hpInput ? parseInt(hpInput.value, 10) || 0 : token.hp;
-								statsToUpdate.initiative = initInput ? parseInt(initInput.value, 10) || 0 : token.initiative;
-								statsToUpdate.ac = acInput ? parseInt(acInput.value, 10) || 0 : token.ac;
-                                statsToUpdate.sightRadius = sightInput ? parseInt(sightInput.value, 10) || 0 : token.sightRadius;
+							// Add editable field values to statsToUpdate if they exist in the menu HTML for this role
+							// These checks implicitly handle which fields were available to the user
+							if (maxHPInput) statsToUpdate.maxHP = parseInt(maxHPInput.value, 10) || token.maxHP; // Use existing token stat as fallback if input is missing or parsing fails
+							if (hpInput) statsToUpdate.hp = parseInt(hpInput.value, 10) || token.hp;
+							if (initInput) statsToUpdate.initiative = parseInt(initInput.value, 10) || token.initiative;
+							if (acInput) statsToUpdate.ac = parseInt(acInput.value, 10) || token.ac;
+                            if (sightInput) statsToUpdate.sightRadius = parseInt(sightInput.value, 10) || token.sightRadius;
+                            // Use the correctly queried lightSourceCheckbox variable
+                            if (lightSourceCheckboxForSave) statsToUpdate.isLightSource = lightSourceCheckboxForSave.checked;
+                            if (brightRangeInputForSave) statsToUpdate.brightRange = parseInt(brightRangeInputForSave.value, 10) || token.brightRange;
+                            if (dimRangeInputForSave) statsToUpdate.dimRange = parseInt(dimRangeInputForSave.value, 10) || token.dimRange;
 
-                                // Use the correctly queried lightSourceCheckbox variable
-                                statsToUpdate.isLightSource = lightSourceCheckbox ? lightSourceCheckbox.checked : false;
 
-                                // Bright/Dim ranges only relevant if it's a light source and inputs exist (DM only)
-                                statsToUpdate.brightRange = (statsToUpdate.isLightSource && brightRangeInput) ? parseInt(brightRangeInput.value, 10) || 0 : 0;
-                                statsToUpdate.dimRange = (statsToUpdate.isLightSource && dimRangeInput) ? parseInt(dimRangeInput.value, 10) || 0 : 0;
+                            // Ensure dim is always >= bright before sending (Server does this too, but belt-and-suspenders)
+                            // Use default 0 if brightRange/dimRange are not defined yet
+                            const finalBright = statsToUpdate.brightRange !== undefined ? statsToUpdate.brightRange : (token.brightRange || 0);
+                            const finalDim = statsToUpdate.dimRange !== undefined ? statsToUpdate.dimRange : (token.dimRange || 0);
+                            statsToUpdate.dimRange = Math.max(finalBright, finalDim);
+                            statsToUpdate.brightRange = finalBright; // Ensure brightRange is also explicitly sent
 
-                                // Ensure dim is always >= bright before sending (Server does this too, but belt-and-suspenders)
-                                statsToUpdate.dimRange = Math.max(statsToUpdate.brightRange, statsToUpdate.dimRange);
-
-                                // Note: If you added player-editable HP/Init inputs (commented out in HTML),
-                                // you would also query them here in the DM block, as they would exist,
-                                // but their values are already being correctly assigned above regardless of role check.
-
-							} else {
-                                // User is a Player (and owns the token or is parent owner)
-                                // Player menu only *currently* has the rotate input (which is handled above)
-                                // If you uncommented player-editable HP/Init inputs in the HTML, query them here:
-                                 /*
-                                 const playerHpInput = menu.querySelector('.hp-input');
-                                 const playerInitInput = menu.querySelector('.init-input');
-                                 // Add these values to statsToUpdate if found in the player menu
-                                 if (playerHpInput) statsToUpdate.hp = parseInt(playerHpInput.value, 10) || 0;
-                                 if (playerInitInput) statsToUpdate.initiative = parseInt(playerInitInput.value, 10) || 0;
-                                 */
-                                // No other stats (maxHP, ac, sight, light) are editable or queryable by players.
-							}
 
                             // Emit the update - Server will handle permissions based on role and ownership
-                            // The statsToUpdate object contains tokenId and rotation for everyone,
-                            // and potentially other fields if user is DM or if player editing is enabled/uncommented.
+                            // The statsToUpdate object now contains all fields that *could* have been edited.
+                            // Server side should only apply fields permitted for the user's role/ownership.
 							socket.emit('updateTokenStats', statsToUpdate);
 
 							menu.remove();
@@ -2145,8 +2176,7 @@
 					});
 
                     // Set the flag to true after the menu is fully shown and listeners are attached
-                    isContextMenuOpen = true; // Setting this here ensures closeMenu works only *after* it's drawn
-
+                    // isContextMenuOpen is set to true at the very start of the function now. No need to set it here again.
 				} // End showContextMenu
 
 				function handleLongPress(clientX, clientY) {
