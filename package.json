@@ -1,6 +1,6 @@
 {
   "name": "thor-grid",
-  "version": "2.2.1",
+  "version": "2.2.15",
   "description": "Thor-Grid Virtual Tabletop",
   "main": "main.js",
   "scripts": {
