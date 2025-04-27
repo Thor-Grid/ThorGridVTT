@@ -517,25 +517,35 @@ io.on('connection', (socket) => {
     });
 
     socket.on('updateGridSize', ({ width, height }) => {
-        if (roleFromSocket(socket) === 'dm') {
-            const newWidth = Math.max(1, Math.floor(Number(width)));
-            const newHeight = Math.max(1, Math.floor(Number(height)));
+		if (roleFromSocket(socket) === 'dm') {
+			const newWidth = Math.max(1, Math.floor(Number(width)));
+			const newHeight = Math.max(1, Math.floor(Number(height)));
 
-            // Only update if size is actually different
-            if (gameState.gridSize.width !== newWidth || gameState.gridSize.height !== newHeight) {
-                gameState.gridSize = { width: newWidth, height: newHeight };
-                // Normalize walls to the new size (important!)
-                gameState.walls = normalizeWalls(gameState.walls, newWidth, newHeight);
-                console.log(`Grid size updated to ${newWidth}x${newHeight} by DM "${getUsernameFromSocket(socket)}"`);
-                io.emit('updateGridSize', gameState.gridSize); // Broadcast the new size
-                io.emit('updateWalls', gameState.walls); // Broadcast normalized walls (size might have changed)
-                saveStateDebounced(); // Auto-save state after change
-            }
-        } else {
-             socket.emit('error', 'Only the DM can change the grid size.');
-             console.warn(`Client ${socket.id} attempted unauthorized grid size change.`);
-        }
-    });
+			// --- Added Min/Max Validation for customGrid ---
+			const minSize = 5;  // Consistent with client
+			const maxSize = 500; // Consistent with client
+			if (newWidth < minSize || newWidth > maxSize || newHeight < minSize || newHeight > maxSize) {
+				socket.emit('error', `Invalid grid size. Dimensions must be between ${minSize} and ${maxSize}.`);
+				console.warn(`DM "${getUsernameFromSocket(socket)}" attempted invalid grid size: ${newWidth}x${newHeight}`);
+				return; // Stop processing
+			}
+			// --- End Validation ---
+
+
+			// Only update if size is actually different
+			if (gameState.gridSize.width !== newWidth || gameState.gridSize.height !== newHeight) {
+				gameState.gridSize = { width: newWidth, height: newHeight };
+				gameState.walls = normalizeWalls(gameState.walls, newWidth, newHeight);
+				console.log(`Grid size updated to ${newWidth}x${newHeight} by DM "${getUsernameFromSocket(socket)}"`);
+				io.emit('updateGridSize', gameState.gridSize); // Broadcast the new size
+				io.emit('updateWalls', gameState.walls); // Broadcast normalized walls
+				saveStateDebounced();
+			}
+		} else {
+			 socket.emit('error', 'Only the DM can change the grid size.');
+			 console.warn(`Client ${socket.id} attempted unauthorized grid size change.`);
+		}
+	});
 
     socket.on('saveState', () => {
         if (roleFromSocket(socket) === 'dm') {

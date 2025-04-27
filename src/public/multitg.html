@@ -490,23 +490,31 @@
             </details>
 
             <details class="dm-controls">
-                <summary>Scene Size</summary>
-                <div>
-                    <label for="grid-size-select">Scene Size:</label>      
+				<summary>Scene Size</summary>
+				<div>
+					<label for="grid-size-select">Scene Size:</label>      
 					<select id="grid-size-select">
 						<option value="micro">Micro (20x15)</option>
 						<option value="small" selected>Small (40x30)</option>
 						<option value="medium">Medium (70x40)</option>
 						<option value="large">Large (100x55)</option>
 						<option value="extra-large">Extra Large (140x70)</option>
-						<option value="small-portrait">Small Portrait (30x40)</option> // Add this
-						<option value="medium-portrait">Medium Portrait (40x70)</option> // Add this
-						<option value="large-portrait">Large Portrait (55x100)</option> // Add this
-						<option value="extra-large-portrait">Extra Large Portrait (70x140)</option> // Add this
+						<option value="small-portrait">Small Portrait (30x40)</option>
+						<option value="medium-portrait">Medium Portrait (40x70)</option>
+						<option value="large-portrait">Large Portrait (55x100)</option>
+						<option value="extra-large-portrait">Extra Large Portrait (70x140)</option>
+						<option value="custom">Custom</option> <!-- New option for custom size -->
 					</select>
-						
-                </div>
-            </details>
+					<!-- Custom size inputs, initially hidden -->
+					<div id="custom-size-inputs" style="display: none; margin-top: 10px;">
+						<label for="custom-width">Width (cells):</label>
+						<input type="number" id="custom-width" min="5" max="500" value="40">
+						<label for="custom-height">Height (cells):</label>
+						<input type="number" id="custom-height" min="5" max="500" value="30">
+						<button id="apply-custom-size">Apply Custom Size</button>
+					</div>
+				</div>
+			</details>
 
             <details id="instructions-section">
                 <summary>Instructions</summary>
