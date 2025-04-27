@@ -966,6 +966,12 @@
                     'large-portrait': { width: 55, height: 100 },
                     'extra-large-portrait': { width: 70, height: 140 },
 				};
+				
+				// custom gridSize
+				const customSizeInputsDiv = document.getElementById('custom-size-inputs');
+				const customWidthInput = document.getElementById('custom-width');
+				const customHeightInput = document.getElementById('custom-height');
+				const applyCustomSizeButton = document.getElementById('apply-custom-size');
 
 				let currentGridWidthCells = gridSizeOptions.small.width;
 				let currentGridHeightCells = gridSizeOptions.small.height;
@@ -2496,37 +2502,114 @@
 				});
 
 				gridSizeSelect.addEventListener('change', () => {
-					if (currentRole !== 'dm') {
-                         showNotification("Only the DM can change the scene size.", false);
-                         // Revert the select value visually if player tried to change it
-                         const currentSizeKey = Object.keys(gridSizeOptions).find(
-                            key => gridSizeOptions[key].width === currentGridWidthCells &&
-                                   gridSizeOptions[key].height === currentGridHeightCells
-                         ) || 'small';
-                         gridSizeSelect.value = currentSizeKey;
-                         return; // Prevent players from changing size
-                    }
 					const sizeKey = gridSizeSelect.value;
-					const newGridSize = gridSizeOptions[sizeKey];
 
-                    if (!newGridSize) {
-                         console.error("Unknown grid size selected:", sizeKey);
-                         showNotification("Error: Invalid grid size selected.", true);
-                         // Revert the select value visually
-                          const currentSizeKey = Object.keys(gridSizeOptions).find(
-                            key => gridSizeOptions[key].width === currentGridWidthCells &&
-                                   gridSizeOptions[key].height === currentGridHeightCells
-                         ) || 'small';
-                         gridSizeSelect.value = currentSizeKey;
-                         return;
-                    }
+					// *** Player Role Check (moved earlier for clarity) ***
+					if (currentRole !== 'dm') {
+						showNotification("Only the DM can change the scene size.", false);
+						// Revert the select value visually if player tried to change it
+						// Find the current size key based on actual grid dimensions
+						const currentSizeKey = Object.keys(gridSizeOptions).find(
+							key => gridSizeOptions[key]?.width === currentGridWidthCells &&
+								   gridSizeOptions[key]?.height === currentGridHeightCells
+						); // Note: If current size IS custom, this might be undefined.
 
-                    // Send grid size update to server. Server will broadcast fullStateUpdate including normalized walls and token positions.
-					socket.emit('updateGridSize', { width: newGridSize.width, height: newGridSize.height });
+						// If the player selected 'custom', or if the current size *is* custom, ensure the select reflects reality
+						if (sizeKey === 'custom' || !currentSizeKey) {
+							 // If current size isn't a preset, or they tried to select custom, leave it as custom
+							 gridSizeSelect.value = 'custom';
+							 // Ensure custom inputs are shown and populated if the current size *is* custom
+							 if (customSizeInputsDiv && customWidthInput && customHeightInput) {
+								 customWidthInput.value = currentGridWidthCells;
+								 customHeightInput.value = currentGridHeightCells;
+								 customSizeInputsDiv.style.display = 'block';
+							 }
+						} else {
+							// If current size is a preset, revert to that preset
+							 gridSizeSelect.value = currentSizeKey;
+							 // Ensure custom inputs are hidden if reverting to a preset
+							 if (customSizeInputsDiv) {
+								 customSizeInputsDiv.style.display = 'none';
+							 }
+						}
+						return; // Stop processing for players
+					}
 
-                    // Client side update will happen when 'fullStateUpdate' is received
-                    // Don't change local state immediately here, rely on server broadcast
-                    showNotification(`Grid size updated to ${newGridSize.width}x${newGridSize.height}.`);
+					// *** DM Logic ***
+					if (sizeKey === 'custom') {
+						// DM selected 'Custom' from the dropdown
+						customWidthInput.value = currentGridWidthCells; // Pre-fill with current size
+						customHeightInput.value = currentGridHeightCells;
+						customSizeInputsDiv.style.display = 'block'; // Show the custom input fields
+						// We don't emit here; the DM needs to click "Apply Custom Size"
+					} else {
+						// DM selected a PRESET size from the dropdown
+						customSizeInputsDiv.style.display = 'none'; // Hide the custom input fields
+
+						// Look up the dimensions for the selected preset
+						const newGridSize = gridSizeOptions[sizeKey];
+
+						if (!newGridSize) {
+							 // This check catches cases where the selected value *isn't* 'custom' but also *isn't* a valid preset key
+							 // (e.g., if someone modified the HTML options incorrectly)
+							 console.error("Error: Selected preset size key not found in options:", sizeKey);
+							 showNotification("Error: Invalid preset size selected.", true);
+
+							 // Revert select to the *actual* current size (which might be a different preset or custom)
+							 const currentSizeKey = Object.keys(gridSizeOptions).find(
+								 key => gridSizeOptions[key]?.width === currentGridWidthCells &&
+										gridSizeOptions[key]?.height === currentGridHeightCells
+				);
+
+							 if (currentSizeKey) {
+								 gridSizeSelect.value = currentSizeKey;
+								 customSizeInputsDiv.style.display = 'none';
+							 } else {
+								 gridSizeSelect.value = 'custom'; // It must be a custom size already
+								 if (customSizeInputsDiv && customWidthInput && customHeightInput) {
+									 customWidthInput.value = currentGridWidthCells;
+									 customHeightInput.value = currentGridHeightCells;
+									 customSizeInputsDiv.style.display = 'block';
+								 }
+							 }
+							 return;
+						}
+
+						// Emit the valid preset size to the server
+						socket.emit('updateGridSize', { width: newGridSize.width, height: newGridSize.height });
+						showNotification(`Updating grid size to ${sizeKey} (${newGridSize.width}x${newGridSize.height})...`);
+					}
+				});
+				
+				applyCustomSizeButton.addEventListener('click', () => {
+					if (currentRole !== 'dm') {
+						showNotification("Only the DM can apply custom scene sizes.", false);
+						return;
+					}
+
+					const widthValue = customWidthInput.value;
+					const heightValue = customHeightInput.value;
+
+					const customWidth = parseInt(widthValue, 10);
+					const customHeight = parseInt(heightValue, 10);
+
+					// Basic validation (matches input attributes)
+					const minSize = 5;
+					const maxSize = 500; // Match your input max attribute
+
+					if (isNaN(customWidth) || isNaN(customHeight) ||
+						customWidth < minSize || customWidth > maxSize ||
+						customHeight < minSize || customHeight > maxSize) {
+						showNotification(`Invalid custom size. Width and Height must be numbers between ${minSize} and ${maxSize}.`, true);
+						return;
+					}
+
+					// Send the custom grid size update to the server
+					socket.emit('updateGridSize', { width: customWidth, height: customHeight });
+					showNotification(`Updating grid size to custom dimensions (${customWidth}x${customHeight})...`);
+
+					// Optional: Hide the custom inputs again after applying
+					// customSizeInputsDiv.style.display = 'none';
 				});
 
 
@@ -3362,24 +3445,34 @@
 				});
 
 				socket.on('updateGridSize', (gridSize) => {
-                    // This handler is potentially redundant now that server sends fullStateUpdate on size change.
-                    // The fullStateUpdate handler will update gridSize and walls.
-                    // If this handler is still needed (e.g., for a direct size update that doesn't include full state),
-                    // it should update local state but still trigger a mask redraw.
 					currentGridWidthCells = gridSize.width;
 					currentGridHeightCells = gridSize.height;
-                    // Update select value
+
+					// Try to find a matching preset key
 					const loadedSizeKey = Object.keys(gridSizeOptions).find(
 						key => gridSizeOptions[key].width === currentGridWidthCells &&
 							   gridSizeOptions[key].height === currentGridHeightCells
-					) || 'small';
-                    gridSizeSelect.value = loadedSizeKey;
+					);
 
-                    // Walls will be normalized by normalizeWalls called in updateWalls (if separate event) or fullStateUpdate.
-                    // No need to normalize walls here unless this event can happen *without* updateWalls/fullStateUpdate.
+					if (loadedSizeKey) {
+						// If it matches a preset, select that preset and hide custom inputs
+						gridSizeSelect.value = loadedSizeKey;
+						if (customSizeInputsDiv) { // Check if element exists
+							 customSizeInputsDiv.style.display = 'none';
+						}
+					} else {
+						// If it doesn't match a preset, select "Custom" and show/update inputs
+						gridSizeSelect.value = 'custom';
+						if (customSizeInputsDiv && customWidthInput && customHeightInput) { // Check elements exist
+							customWidthInput.value = currentGridWidthCells;
+							customHeightInput.value = currentGridHeightCells;
+							customSizeInputsDiv.style.display = 'block'; // Or 'flex'
+						}
+					}
 
-                    maskDirty = true; // Grid size changed, need mask update
-                    resizeCanvas(); // Updates canvas size AND mask canvas size are set, calls drawGrid
+					// --- Important: Keep the rest of the original handler ---
+					maskDirty = true; // Grid size changed, need mask update
+					resizeCanvas();   // Updates canvas size AND mask canvas size, calls drawGrid
 				});
 
 
