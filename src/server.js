@@ -84,7 +84,7 @@ app.get('/', (req, res) => {
 const userDataPath = process.env.USER_DATA_PATH || path.join(__dirname, '..', 'data');
 const stateFileName = 'gameState.json';
 const stateFilePath = path.join(userDataPath, stateFileName);
-console.log(`State file path configured: ${stateFilePath}`);
+//console.log(`State file path configured: ${stateFilePath}`);
 
 async function ensureStateDirExists() {
     try {
@@ -108,6 +108,7 @@ let gameState = {
     gridSize: { width: 40, height: 30 },
     viewState: { scale: 1, panX: 0, panY: 0 }, // Store view state here
     isGridVisible: true, // Controls drawing grid lines
+	isMapFullyVisible: false, // NEW: State for DM's "All Visible Map" toggle
     // Removed 'players' from here - active players are managed in memory
 };
 
@@ -171,6 +172,7 @@ async function loadState() {
         gameState.walls = normalizeWalls(parsed.walls, gameState.gridSize.width, gameState.gridSize.height);
         gameState.backgroundImageUrl = parsed.backgroundImageUrl || '';
         gameState.isGridVisible = parsed.isGridVisible !== undefined ? parsed.isGridVisible : true;
+		gameState.isMapFullyVisible = parsed.isMapFullyVisible !== undefined ? parsed.isMapFullyVisible : false; // NEW: Load state for toggle
 
         // Load view state if present, otherwise use defaults
         gameState.viewState = parsed.viewState || { scale: 1, panX: 0, panY: 0 };
@@ -199,7 +201,7 @@ async function loadState() {
         console.log(`State loaded successfully from ${stateFilePath}`);
         console.log(`Loaded gridSize: ${gameState.gridSize.width}x${gameState.gridSize.height}`);
         console.log(`Loaded ${gameState.tokens.length} tokens.`);
-
+		
     } catch (err) {
         if (err.code === 'ENOENT') {
             console.log(`No saved state file found at ${stateFilePath}. Initializing default state.`);
@@ -214,11 +216,11 @@ async function loadState() {
             gridSize: gameState.gridSize || { width: 40, height: 30 }, // Keep size if it was loaded
             viewState: { scale: 1, panX: 0, panY: 0 },
             isGridVisible: true,
+			isMapFullyVisible: false, // NEW: Default state for toggle
         };
          console.log("Initialized default state.");
     }
-    // Ensure walls are normalized again just in case loadState had issues but didn't throw
-    // or if default state was initialized.
+    // Ensure walls are normalized again just in case 
      gameState.walls = normalizeWalls(gameState.walls, gameState.gridSize.width, gameState.gridSize.height);
 }
 
@@ -571,6 +573,7 @@ io.on('connection', (socket) => {
                 gameState.walls = normalizeWalls(newState.walls, gameState.gridSize.width, gameState.gridSize.height);
                 gameState.backgroundImageUrl = newState.backgroundImageUrl || '';
                 gameState.isGridVisible = newState.isGridVisible !== undefined ? newState.isGridVisible : true;
+				gameState.isMapFullyVisible = newState.isMapFullyVisible !== undefined ? newState.isMapFullyVisible : false; // NEW: Import toggle state
 
                 // Optional: Import view state if available, otherwise keep current or reset
                 gameState.viewState = newState.viewState || { scale: 1, panX: 0, panY: 0 };
@@ -616,6 +619,25 @@ io.on('connection', (socket) => {
             }
         } else {
              socket.emit('error', 'Only the DM can import the state.');
+        }
+    });
+	
+	socket.on('toggleMapVisibility', (newState) => {
+        // Only allow the DM to change this state
+        if (roleFromSocket(socket) === 'dm') {
+             const isNowVisible = Boolean(newState); // Ensure the received state is boolean
+             // Only update the state if it's actually changing to avoid unnecessary broadcasts/saves
+             if (gameState.isMapFullyVisible !== isNowVisible) {
+                 gameState.isMapFullyVisible = isNowVisible;
+                 console.log(`Map visibility toggle set to ${gameState.isMapFullyVisible} by DM "${getUsernameFromSocket(socket)}"`);
+                 // Broadcast the new state to ALL clients (DMs and Players)
+                 io.emit('mapVisibilityToggled', gameState.isMapFullyVisible);
+                 saveStateDebounced(); // Auto-save state after change
+             }
+        } else {
+            // Optionally send an error back if a non-DM tries to toggle
+            socket.emit('error', 'Only the DM can toggle global map visibility.');
+            console.warn(`Client ${socket.id} attempted unauthorized map visibility toggle.`);
         }
     });
 

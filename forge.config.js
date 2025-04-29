@@ -11,7 +11,8 @@ module.exports = {
     {
       name: '@electron-forge/maker-squirrel',
       config: {
-        name: 'thor-grid', // <--- CHANGE THIS BACK to 'thor-grid' (Squirrel internal name, fixes filename)
+		loadingGif: './build/thor-gridvtt.gif',
+        name: 'thor-grid',
         productName: 'ThorGrid VTT', // Display in Programs & Features (Keep this display name)
         setupDisplayName: 'ThorGrid VTT', // Display in Start Menu (Keep this display name)
         iconUrl: 'https://raw.githubusercontent.com/Thor-Grid/ThorGridVTT/refs/heads/main/thorgrid.ico', // Keep

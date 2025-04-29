@@ -391,6 +391,7 @@
                 <button id="toggle-grid-button" class="dm-controls">Hide Grid</button>
                 <button id="draw-wall-button" class="dm-controls">Draw Walls</button>
                 <button id="erase-wall-button" class="dm-controls">Erase Walls</button>
+				<button id="toggle-all-visible-button" class="dm-controls">Show Map</button>
             </div>
 
             <!-- Save Controls -->
@@ -564,6 +565,7 @@
 			let socket = null; // Initialize socket variable
 			let username = null;
 			let currentRole = null;
+			let isMapFullyVisible = false;
 
 			// Suppress Autofill errors to clean up console
 			console.error = (function (originalError) {
@@ -940,6 +942,8 @@
 				const eraseWallButton = document.getElementById('erase-wall-button');
 				const interactButton = document.getElementById('interact-button');
 				const toggleGridButton = document.getElementById('toggle-grid-button');
+				const toggleAllVisibleButton = document.getElementById('toggle-all-visible-button');
+				console.log("toggleAllVisibleButton element:", toggleAllVisibleButton); // DEBUG LOG: Is button element found?
 				const resetViewButton = document.getElementById('reset-view-button');
 				const backgroundForm = document.getElementById('background-form');
 				const backgroundImageUrlInput = document.getElementById('background-image-url');
@@ -1153,13 +1157,14 @@
 
                 // --- Calculate Visible Cells (Modified for Layered Light/Vision) ---
                 function calculateVisibleCells() {
-                    // Only calculate for players
-                    if (currentRole === 'dm') {
-                        // DM sees everything - handled in drawGrid by skipping mask
+                    // NEW: Only calculate for players AND when "All Visible" is OFF
+                    if (currentRole === 'dm' || isMapFullyVisible) {
+                        // DM sees everything, or All Visible is on - no masks needed
                         brightLightCells.clear();
                         dimLightCells.clear();
                         playerVisionCells.clear();
-                        // No mask needed for DM, maskDirty will be set false in drawGrid for DM
+                        // Setting maskDirty = true here ensures buildVisibilityMask clears the mask if needed
+                        maskDirty = true;
                         return;
                     }
 
@@ -1294,6 +1299,12 @@
                 // alpha = 0.6 -> Dimmed (Dim Light)
                 // alpha = 1   -> Solid Black Fog (Not Visible at all OR Player Inherent Vision Alone)
                 function buildVisibilityMask() {
+					if (currentRole === 'dm' || isMapFullyVisible) {
+                        visibilityMaskCtx.clearRect(0, 0, visibilityMaskCanvas.width, visibilityMaskCanvas.height);
+                        maskDirty = false; // Mask is now clear (effectively off)
+                        return;
+                    }
+				
                      if (!maskDirty) return; // Only rebuild if necessary
 
                      const gridPixelWidth = currentGridWidthCells * gridSize;
@@ -1645,7 +1656,8 @@
 				// This function determines if a cell is *knowable* (can see tokens/walls there), not its visual brightness.
                 // Used for interaction checks and general token knowability.
 				function isCellKnowable(x, y) {
-					if (currentRole === 'dm') return true; // DM sees all
+					// NEW: If DM or All Visible is ON, any cell is knowable
+					if (currentRole === 'dm' || isMapFullyVisible) return true;
 					const cellKey = `${x},${y}`;
 					// A cell is *knowable* if it's in bright, dim, OR player vision areas
 					// Player's own squares are also knowable (and visually clear)
@@ -1669,12 +1681,13 @@
                 // --- Helper to check if any part of a token is knowable ---
                 // Used for interaction checks and filtering tokens for drawing/names etc.
                  function isTokenKnowable(token) {
-                      if (currentRole === 'dm') return true; // DM sees all tokens
-                      const tokenSize = token.size || 1;
-                       // An owned token is always considered "knowable" and interactable by its owner
-                      if (currentRole === 'player' && (token.owner === username || (token.isMinion && token.parentOwner === username))) {
-                         return true;
-                      }
+                    // NEW: If DM or All Visible is ON, all tokens are knowable
+                    if (currentRole === 'dm' || isMapFullyVisible) return true;
+						const tokenSize = token.size || 1;
+						// An owned token is always considered "knowable" and interactable by its owner
+						if (currentRole === 'player' && (token.owner === username || (token.isMinion && token.parentOwner === username))) {
+                        return true;
+                     }
                        // Otherwise, check if any cell it occupies is knowable (visible by any light or inherent vision)
                       for (let dy = 0; dy < tokenSize; dy++) {
                           for (let dx = 0; dx < tokenSize; dx++) {
@@ -1691,23 +1704,18 @@
 					// Remove existing token names
 					document.querySelectorAll('.token-name').forEach(el => el.remove());
 
-					// Only show names at sufficient zoom or for hovered/dragged token
+					// Only show names at sufficient zoom OR if All Visible is ON
 					const zoomThreshold = 1.0; // Show all names above this scale
 					const minDistance = 40; // Minimum pixel distance between names
 
                     const visibleNames = [];
 
-					// Always include hovered/dragged token name if it's NAME-ELIGIBLE
+					// Always include hovered/dragged token name if it's NAME-ELIGIBLE and knowable/owned/DM view
 					const importantTokenIndex = (hoveredTokenIndex !== -1) ? hoveredTokenIndex : draggedTokenIndex;
 					const importantToken = (importantTokenIndex !== -1) ? tokensData[importantTokenIndex] : null;
 
-                    // Determine if the important token's name should be displayed
-                    const isImportantTokenNameVisible = importantToken ?
-                        (currentRole === 'dm' || // DM sees all names
-                         importantToken.owner === username || // Owned tokens' names are always visible to owner
-                         (importantToken.isMinion && importantToken.parentOwner === username) || // Owned minions' names visible to parent owner
-                         isTokenKnowable(importantToken)) // Also show name if any part is knowable (in bright/dim light or vision)
-                        : false;
+                    // Determine if the important token's name should be displayed (using the already updated isTokenKnowable)
+                    const isImportantTokenNameVisible = importantToken ? isTokenKnowable(importantToken) : false;
 
 
                     if (importantToken && isImportantTokenNameVisible) {
@@ -1722,23 +1730,15 @@
                          visibleNames.push({ tokenData: importantToken, screenX: screenX_center, screenY_top: screenY_top, priority: 2 }); // Store screenX as center, screenY_top as top
                     }
 
-
-					if (scale >= zoomThreshold) {
+                    // Process other tokens: Show names if zoom is sufficient OR if All Visible is ON
+					if (scale >= zoomThreshold || isMapFullyVisible) { // Corrected condition here
 						tokensData.forEach(tokenData => { // Iterate through ALL tokens
 							// Skip if already added (importantToken)
 							if (importantToken && importantToken.id === tokenData.id) return;
 							if (!tokenData.name) return; // Skip tokens with no name
 
-                            // Determine if the token's name should be visible for THIS client
-                            let isNameVisible = false;
-                            if (currentRole === 'dm') {
-                                isNameVisible = true; // DM sees all names
-                            } else {
-                                // Player sees name if owned OR if token is knowable
-                                const isOwned = tokenData.owner === username || (tokenData.isMinion && tokenData.parentOwner === username);
-                                const isAnyPartKnowable = isTokenKnowable(tokenData); // Check if any part is knowable
-                                isNameVisible = isOwned || isAnyPartKnowable; // Show name if owned OR knowable
-                            }
+                            // Determine if the token's name should be visible for THIS client (using isTokenKnowable)
+                            let isNameVisible = isTokenKnowable(tokenData);
 
 
 							if (isNameVisible) {
@@ -1751,18 +1751,24 @@
                                 const screenY_top = canvasY_top * scale + panY;
 
                                 // Check for overlap with names already chosen for display
-                                // A simpler overlap check based on the token's center distance, scaled by zoom:
+                                // Only apply overlap check if All Visible is OFF AND we're below the zoom threshold
                                 let canShow = true;
-                                for (const visible of visibleNames) {
-                                     const dx = screenX_center - visible.screenX;
-                                     const dy = screenY_top - visible.screenY_top;
-                                     const distance = Math.sqrt(dx * dx + dy * dy);
-                                     // Scale the minimum distance based on zoom level so closer tokens are more likely to show names zoomed out
-                                     if (distance * scale < minDistance) {
-                                         canShow = false;
-                                         break;
+                                if (scale < zoomThreshold && !isMapFullyVisible) { // Corrected condition here
+                                     for (const visible of visibleNames) {
+                                          // Check horizontal and vertical distance separately first for efficiency
+                                          const dx_pixels = Math.abs(screenX_center - visible.screenX);
+                                          const dy_pixels = Math.abs(screenY_top - visible.screenY_top);
+
+                                          // Re-using the simple distance check from your original code's intent.
+                                          const distance = Math.sqrt(dx_pixels * dx_pixels + dy_pixels * dy_pixels);
+                                          // Scale the minimum distance inversely with zoom
+                                          if (distance < minDistance / scale) { // Divide minDistance by scale
+                                             canShow = false;
+                                             break;
+                                          }
                                      }
                                 }
+
 
                                 if (canShow) {
                                     visibleNames.push({ tokenData, screenX: screenX_center, screenY_top: screenY_top, priority: 0 }); // Store screenX as center, screenY_top as top
@@ -1785,7 +1791,7 @@
                         if (b.screenY_top !== a.screenY_top) {
                              return b.screenY_top - a.screenY_top;
                         }
-                        // Tertiary sort: Screen X position (ascending, so lefter elements appear earlier/behind)
+                        // Tertiary sort: Screen X position (ascending, so lefter elements draw earlier/behind)
                          return a.screenX - b.screenX;
                     });
 
@@ -1813,7 +1819,7 @@
 						}
 						nameDiv.dataset.tokenId = tokenData.id;
 
-                        // Append first to measure (necessary to get offsetWidth/offsetHeight)
+                        // Append first to measure (necessary to get offsetWidth/offsetHeight) - This is still needed despite the flawed overlap check attempt
                         document.body.appendChild(nameDiv);
 
 						// --- CORRECTED POSITIONING LOGIC ---
@@ -2659,7 +2665,33 @@
                          showNotification("Only the DM can toggle the grid lines.", false);
                     }
 				});
+				
+				if (toggleAllVisibleButton) { // Ensure the button element was found
+                     console.log("Attaching click listener to toggleAllVisibleButton."); // DEBUG LOG: Is listener being attached?
+                     toggleAllVisibleButton.addEventListener('click', () => {
+                         console.log("Toggle All Visible button click event fired!"); // DEBUG LOG 1
+                         console.log("Current role inside listener:", currentRole); // DEBUG LOG 2
 
+                         // Only allow the DM to click this button
+                         if (currentRole === 'dm') {
+                             console.log("User is DM. Proceeding with toggle logic."); // DEBUG LOG 3
+                             const newState = !isMapFullyVisible;
+                             console.log("Emitting 'toggleMapVisibility' with newState:", newState); // DEBUG LOG 4
+
+                             // Emit the toggle state to the server
+                             socket.emit('toggleMapVisibility', newState);
+                             // Provide immediate feedback to the DM client (this will be updated again by the server broadcast)
+                             showNotification(isMapFullyVisible ? 'Turning off "All Visible" map.' : 'Turning on "All Visible" map.');
+                             // The server will broadcast the official state back, which updates the local state and button text
+                         } else {
+                              console.log("User is not DM. Blocking toggle."); // DEBUG LOG 5
+                              showNotification("Only the DM can toggle the 'All Visible' map feature.", false);
+                         }
+                     });
+                } else {
+                    console.warn("toggleAllVisibleButton element not found. Event listener not attached."); // DEBUG LOG: Button not found
+                }
+				
 				resetViewButton.addEventListener('click', () => {
 					scale = 1;
 					// Center the grid in the canvas
@@ -2750,6 +2782,8 @@
                             parentOwner: token.parentOwner
                         })),
 						walls: normalizeWalls(walls, currentGridWidthCells, currentGridHeightCells),
+						isGridVisible: isGridVisible, // Include grid visibility
+                        isMapFullyVisible: isMapFullyVisible, // NEW: Include map visibility toggle state
 						backgroundImageUrl,
 						gridSize: { width: currentGridWidthCells, height: currentGridHeightCells },
                         // Optionally save current view state (pan/scale) - Note: This isn't currently loaded by server/client
@@ -3251,33 +3285,36 @@
 				});
 
 				// Initial state load
+								// Initial state load
 				socket.on('init', (data) => {
 					isLoading = true; // Prevent interaction while loading
+					// Map tokens, ensuring correct structure and applying defaults for new properties
+					// Correctly ensure numeric/boolean types here using Number() and Boolean()
 					tokensData = (data.tokens || []).map(token => ({
-						...token,
+						...token, // Keep existing properties
 						// Ensure numeric positions and add default visibility/light properties if missing
-						x: Number.isFinite(token.x) ? token.x : Math.floor((data.gridSize?.width || gridSizeOptions.small.width) / 2),
-						y: Number.isFinite(token.y) ? token.y : Math.floor((data.gridSize?.height || gridSizeOptions.small.height) / 2),
-                        sightRadius: Number.isFinite(token.sightRadius) ? token.sightRadius : 0, // Default sight radius
-                        isLightSource: Boolean(token.isLightSource), // Default light source
-                        brightRange: Number.isFinite(token.brightRange) ? token.brightRange : 0, // Default bright range
-                        dimRange: Number.isFinite(token.dimRange) ? token.dimRange : 0,         // Default dim range (total radius)
+						x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((data.gridSize?.width || gridSizeOptions.small.width) / 2),
+						y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((data.gridSize?.height || gridSizeOptions.small.height) / 2),
+                        sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
+                        isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
+                        brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
+                        dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
                         // Ensure other potential missing defaults from older formats
-                        maxHP: token.maxHP !== undefined ? token.maxHP : 0,
-                        hp: token.hp !== undefined ? token.hp : 0,
-                        initiative: token.initiative !== undefined ? token.initiative : 0,
-                        ac: token.ac !== undefined ? token.ac : 0,
-                        rotation: token.rotation !== undefined ? token.rotation : 0,
-                        isMinion: token.isMinion !== undefined ? token.isMinion : false,
+                        maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
+                        hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
+                        initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
+                        ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
+                        rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
+                        isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
                         owner: token.owner || null,
                         parentOwner: token.parentOwner || null,
                          // Ensure token size is valid
-                        size: Number.isFinite(token.size) && token.size > 0 ? token.size : 1,
+                        size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
                         // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
                         imageUrl: token.imageUrl || null,
                         backgroundColor: token.backgroundColor || null,
                         imageFilename: token.imageFilename || null,
-					}));
+					})); // <-- The map function and token mapping MUST end cleanly here
 					console.log('Initialized tokens:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' })));
 
 
@@ -3292,7 +3329,9 @@
 					// panY = data.viewState?.panY || 0;
                     // Centering logic handled by resizeCanvas after initial load
 
-					isGridVisible = data.isGridVisible !== undefined ? data.isGridVisible : true;
+                    // These state updates must be *after* the tokensData and grid size are loaded
+					isGridVisible = data.isGridVisible !== undefined ? Boolean(data.isGridVisible) : true; // Ensure boolean
+                    isMapFullyVisible = data.isMapFullyVisible !== undefined ? Boolean(data.isMapFullyVisible) : false; // NEW: Init map visibility toggle state (Ensure boolean)
 
                     // Set grid size select value based on loaded size
 					const loadedSizeKey = Object.keys(gridSizeOptions).find(
@@ -3301,8 +3340,14 @@
 					) || 'small'; // Default to 'small' if loaded size doesn't match a preset
                     gridSizeSelect.value = loadedSizeKey;
 
-
+                    // Update button texts based on loaded state
 					toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+                    // Update the new button's text based on loaded state ONLY IF DM
+                    if (currentRole === 'dm' && toggleAllVisibleButton) { // Ensure DM role before trying to update DM button text
+                         toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+                    }
+
+
 					tokensData.forEach(preloadTokenImage); // Preload images asynchronously
 
 					loadBackgroundImage(data.backgroundImageUrl || ''); // Load background asynchronously
@@ -3315,34 +3360,38 @@
 				});
 
                 // Listen for full state updates (used by importState on the server)
-                socket.on('fullStateUpdate', (state) => {
+				socket.on('fullStateUpdate', (state) => {
                      isLoading = true; // Prevent interaction while updating
+                     // Map tokens, ensuring correct structure and applying defaults for new properties
                      tokensData = (state.tokens || []).map(token => ({
-                         ...token,
+                         ...token, // Keep existing properties
                          // Ensure numeric positions and add default visibility/light properties if missing
-                         x: Number.isFinite(token.x) ? token.x : Math.floor((state.gridSize?.width || gridSizeOptions.small.width) / 2),
-                         y: Number.isFinite(token.y) ? token.y : Math.floor((state.gridSize?.height || gridSizeOptions.small.height) / 2),
-                         sightRadius: Number.isFinite(token.sightRadius) ? token.sightRadius : 0,
-                         isLightSource: Boolean(token.isLightSource),
-                         brightRange: Number.isFinite(token.brightRange) ? token.brightRange : 0,
-                         dimRange: Number.isFinite(token.dimRange) ? token.dimRange : 0,
+                         x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((state.gridSize?.width || gridSizeOptions.small.width) / 2),
+                         y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((state.gridSize?.height || gridSizeOptions.small.height) / 2),
+                         sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
+                         isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
+                         brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
+                         dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
                          // Include other potential missing defaults from older formats
-                         maxHP: token.maxHP !== undefined ? token.maxHP : 0,
-                         hp: token.hp !== undefined ? token.hp : 0,
-                         initiative: token.initiative !== undefined ? token.initiative : 0,
-                         ac: token.ac !== undefined ? token.ac : 0,
-                         rotation: token.rotation !== undefined ? token.rotation : 0,
-                         isMinion: token.isMinion !== undefined ? token.isMinion : false,
+                         maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
+                         hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
+                         initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
+                         ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
+                         rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
+                         isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
                          owner: token.owner || null,
                          parentOwner: token.parentOwner || null,
                           // Ensure token size is valid
-                         size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1,
+                         size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
                          // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
                          imageUrl: token.imageUrl || null,
                          backgroundColor: token.backgroundColor || null,
                          imageFilename: token.imageFilename || null,
 
-                     }));
+                     })); // <-- The map function and token mapping MUST end cleanly here
+                     // console.log('Full state update tokens processed:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' })));
+
+
                      currentGridWidthCells = state.gridSize?.width || gridSizeOptions.small.width;
                      currentGridHeightCells = state.gridSize?.height || gridSizeOptions.small.height;
                      walls = normalizeWalls(state.walls, currentGridWidthCells, currentGridHeightCells);
@@ -3353,8 +3402,10 @@
 					 panX = state.viewState?.panX || 0;
 					 panY = state.viewState?.panY || 0;
 
+                     // These state updates must be *after* the tokensData and grid size are loaded
+                     isGridVisible = state.isGridVisible !== undefined ? Boolean(state.isGridVisible) : true; // Ensure boolean
+                     isMapFullyVisible = state.isMapFullyVisible !== undefined ? Boolean(state.isMapFullyVisible) : false; // NEW: Update map visibility state (Ensure boolean)
 
-                     isGridVisible = state.isGridVisible !== undefined ? state.isGridVisible : true;
 
                      const loadedSizeKey = Object.keys(gridSizeOptions).find(
                          key => gridSizeOptions[key].width === currentGridWidthCells &&
@@ -3362,7 +3413,12 @@
                      ) || 'small';
                      gridSizeSelect.value = loadedSizeKey;
 
+                     // Update button texts based on loaded state ONLY IF DM
                      toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+                     if (currentRole === 'dm' && toggleAllVisibleButton) { // Ensure DM role before trying to update DM button text
+                          toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+                     }
+
                      tokensData.forEach(preloadTokenImage); // Preload images for all tokens
                      loadBackgroundImage(backgroundImageUrl);
 
@@ -3439,6 +3495,22 @@
 					}
 					drawGrid();
 				});
+				
+				// NEW Socket Listener: Handle map visibility toggle state updates
+                socket.on('mapVisibilityToggled', (newState) => {
+                    isMapFullyVisible = Boolean(newState); // Ensure the state is a boolean
+                    console.log(`Map visibility toggle state received: ${isMapFullyVisible}`);
+
+                    // Update button text on DM client, regardless of who sent the update
+                    // We check for `currentRole === 'dm'` here because only DMs see the button
+                    if (currentRole === 'dm' && toggleAllVisibleButton) { // Added the check back
+                         toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+                    }
+                    // Flag the mask as dirty because the visibility state has changed, requiring a rebuild/clear
+                    maskDirty = true;
+                    drawGrid(); // Request a redraw to apply the new visibility state
+                });
+
 
 				socket.on('updateBackground', (url) => {
 					loadBackgroundImage(url); // loadBackgroundImage already calls drawGrid
