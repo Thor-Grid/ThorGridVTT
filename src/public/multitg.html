@@ -264,6 +264,21 @@
             left: 10px;
             z-index: 11;
         }
+		
+		/* Added CSS for active toggle state */
+		button.feature-active {
+			background-color: #f0ad4e; /* Orange */
+			color: white; /* Ensure text is readable */
+			/* Optional: Add subtle inset shadow for a "pushed" look */
+			/* box-shadow: inset 0 2px 5px rgba(0,0,0,0.2); */
+			/* border-color: #eb9316; */ /* Adjust border color if needed */
+		}
+
+		/* Adjust for dark mode */
+		 body.dark-mode button.feature-active {
+			 background-color: #c18d3a; /* Darker orange for dark mode */
+			 color: white;
+		}
 
         .token-context-menu {
             position: fixed;
@@ -3285,9 +3300,10 @@
 				});
 
 				// Initial state load
-								// Initial state load
 				socket.on('init', (data) => {
 					isLoading = true; // Prevent interaction while loading
+					console.log("Initial state received:", data); // Added log to see received data structure
+
 					// Map tokens, ensuring correct structure and applying defaults for new properties
 					// Correctly ensure numeric/boolean types here using Number() and Boolean()
 					tokensData = (data.tokens || []).map(token => ({
@@ -3295,139 +3311,158 @@
 						// Ensure numeric positions and add default visibility/light properties if missing
 						x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((data.gridSize?.width || gridSizeOptions.small.width) / 2),
 						y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((data.gridSize?.height || gridSizeOptions.small.height) / 2),
-                        sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
-                        isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
-                        brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
-                        dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
-                        // Ensure other potential missing defaults from older formats
-                        maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
-                        hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
-                        initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
-                        ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
-                        rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
-                        isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
-                        owner: token.owner || null,
-                        parentOwner: token.parentOwner || null,
-                         // Ensure token size is valid
-                        size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
-                        // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
-                        imageUrl: token.imageUrl || null,
-                        backgroundColor: token.backgroundColor || null,
-                        imageFilename: token.imageFilename || null,
-					})); // <-- The map function and token mapping MUST end cleanly here
+						sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
+						isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
+						brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
+						dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
+						// Ensure other potential missing defaults from older formats
+						maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
+						hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
+						initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
+						ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
+						rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
+						isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
+						owner: token.owner || null,
+						parentOwner: token.parentOwner || null,
+						 // Ensure token size is valid
+						size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
+						// imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
+						imageUrl: token.imageUrl || null,
+						backgroundColor: token.backgroundColor || null,
+						imageFilename: token.imageFilename || null,
+					}));
 					console.log('Initialized tokens:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' })));
 
 
-                    currentGridWidthCells = data.gridSize?.width || gridSizeOptions.small.width;
+					currentGridWidthCells = data.gridSize?.width || gridSizeOptions.small.width;
 					currentGridHeightCells = data.gridSize?.height || gridSizeOptions.small.height;
 					walls = normalizeWalls(data.walls, currentGridWidthCells, currentGridHeightCells);
 
 					// View state from state file is currently ignored on init, relying on client's default or reset view.
-                    // If you wanted to load view state:
-                    // scale = data.viewState?.scale || 1;
+					// If you wanted to load view state:
+					// scale = data.viewState?.scale || 1;
 					// panX = data.viewState?.panX || 0;
 					// panY = data.viewState?.panY || 0;
-                    // Centering logic handled by resizeCanvas after initial load
+					// Centering logic handled by resizeCanvas after initial load
 
-                    // These state updates must be *after* the tokensData and grid size are loaded
+					// --- Corrected: These state updates must be *after* the tokensData and grid size are loaded ---
 					isGridVisible = data.isGridVisible !== undefined ? Boolean(data.isGridVisible) : true; // Ensure boolean
-                    isMapFullyVisible = data.isMapFullyVisible !== undefined ? Boolean(data.isMapFullyVisible) : false; // NEW: Init map visibility toggle state (Ensure boolean)
+					isMapFullyVisible = data.isMapFullyVisible !== undefined ? Boolean(data.isMapFullyVisible) : false; // NEW: Init map visibility toggle state (Ensure boolean)
 
-                    // Set grid size select value based on loaded size
+					// Set grid size select value based on loaded size
 					const loadedSizeKey = Object.keys(gridSizeOptions).find(
 						key => gridSizeOptions[key].width === currentGridWidthCells &&
 							   gridSizeOptions[key].height === currentGridHeightCells
 					) || 'small'; // Default to 'small' if loaded size doesn't match a preset
-                    gridSizeSelect.value = loadedSizeKey;
+					gridSizeSelect.value = loadedSizeKey;
 
-                    // Update button texts based on loaded state
-					toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
-                    // Update the new button's text based on loaded state ONLY IF DM
-                    if (currentRole === 'dm' && toggleAllVisibleButton) { // Ensure DM role before trying to update DM button text
-                         toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
-                    }
+					// --- ADDED: Update button text and class based on loaded state (DM only) ---
+					// This runs after init, the role will be set shortly after by roleAssigned
+					// It's okay to set these here, they will be corrected if needed in roleAssigned or subsequent updates.
+					// Best practice is often to put this in roleAssigned after init has populated state, but this works too.
+					 if (currentRole === 'dm') { // Check if user is DM before touching DM-only buttons
+						if (toggleGridButton) { // Check if button element exists
+						   toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+						   toggleGridButton.classList.toggle('feature-active', !isGridVisible); // Active when grid is HIDDEN
+						}
+						if (toggleAllVisibleButton) { // Check if button element exists
+						   toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+						   toggleAllVisibleButton.classList.toggle('feature-active', isMapFullyVisible); // Active when map is FULLY VISIBLE
+						}
+					 }
+					// --- END ADDED ---
 
 
 					tokensData.forEach(preloadTokenImage); // Preload images asynchronously
-
 					loadBackgroundImage(data.backgroundImageUrl || ''); // Load background asynchronously
 
-                    maskDirty = true; // State initialized, need to calculate and build mask
-                    resizeCanvas(); // Ensure canvas size matches window and mask canvas size is set, also calls drawGrid
+					maskDirty = true; // State initialized, need to calculate and build mask
+					resizeCanvas(); // Ensure canvas size matches window and mask canvas size is set, also calls drawGrid
 					// drawGrid is called recursively by requestAnimationFrame
 
 					isLoading = false; // Loading is complete
 				});
 
-                // Listen for full state updates (used by importState on the server)
+				// Listen for full state updates (used by importState on the server)
 				socket.on('fullStateUpdate', (state) => {
-                     isLoading = true; // Prevent interaction while updating
-                     // Map tokens, ensuring correct structure and applying defaults for new properties
-                     tokensData = (state.tokens || []).map(token => ({
-                         ...token, // Keep existing properties
-                         // Ensure numeric positions and add default visibility/light properties if missing
-                         x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((state.gridSize?.width || gridSizeOptions.small.width) / 2),
-                         y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((state.gridSize?.height || gridSizeOptions.small.height) / 2),
-                         sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
-                         isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
-                         brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
-                         dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
-                         // Include other potential missing defaults from older formats
-                         maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
-                         hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
-                         initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
-                         ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
-                         rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
-                         isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
-                         owner: token.owner || null,
-                         parentOwner: token.parentOwner || null,
-                          // Ensure token size is valid
-                         size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
-                         // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
-                         imageUrl: token.imageUrl || null,
-                         backgroundColor: token.backgroundColor || null,
-                         imageFilename: token.imageFilename || null,
+					 isLoading = true; // Prevent interaction while updating
+					 console.log("Full state update received:", state); // Added log
 
-                     })); // <-- The map function and token mapping MUST end cleanly here
-                     // console.log('Full state update tokens processed:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' })));
+					 // Map tokens, ensuring correct structure and applying defaults for new properties
+					 tokensData = (state.tokens || []).map(token => ({
+						 ...token, // Keep existing properties
+						 // Ensure numeric positions and add default visibility/light properties if missing
+						 x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((state.gridSize?.width || gridSizeOptions.small.width) / 2),
+						 y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((state.gridSize?.height || gridSizeOptions.small.height) / 2),
+						 sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
+						 isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
+						 brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
+						 dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
+						 // Include other potential missing defaults from older formats
+						 maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
+						 hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
+						 initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
+						 ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
+						 rotation: token.rotation !== undefined ? Number(token.rotation) : 0,   // Ensure numeric
+						 isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
+						 owner: token.owner || null,
+						 parentOwner: token.parentOwner || null,
+						  // Ensure token size is valid
+						 size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure numeric
+						 // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
+						 imageUrl: token.imageUrl || null,
+						 backgroundColor: token.backgroundColor || null,
+						 imageFilename: token.imageFilename || null,
+
+					 }));
+					 // console.log('Full state update tokens processed:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' })));
 
 
-                     currentGridWidthCells = state.gridSize?.width || gridSizeOptions.small.width;
-                     currentGridHeightCells = state.gridSize?.height || gridSizeOptions.small.height;
-                     walls = normalizeWalls(state.walls, currentGridWidthCells, currentGridHeightCells);
-                     backgroundImageUrl = state.backgroundImageUrl || '';
+					 currentGridWidthCells = state.gridSize?.width || gridSizeOptions.small.width;
+					 currentGridHeightCells = state.gridSize?.height || gridSizeOptions.small.height;
+					 walls = normalizeWalls(state.walls, currentGridWidthCells, currentGridHeightCells);
+					 backgroundImageUrl = state.backgroundImageUrl || '';
 
-                     // Load view state if present (from import)
-                     scale = state.viewState?.scale || 1;
+					 // Load view state if present (from import)
+					 scale = state.viewState?.scale || 1;
 					 panX = state.viewState?.panX || 0;
 					 panY = state.viewState?.panY || 0;
 
-                     // These state updates must be *after* the tokensData and grid size are loaded
-                     isGridVisible = state.isGridVisible !== undefined ? Boolean(state.isGridVisible) : true; // Ensure boolean
-                     isMapFullyVisible = state.isMapFullyVisible !== undefined ? Boolean(state.isMapFullyVisible) : false; // NEW: Update map visibility state (Ensure boolean)
+					 // --- Corrected: These state updates must be *after* the tokensData and grid size are loaded ---
+					 isGridVisible = state.isGridVisible !== undefined ? Boolean(state.isGridVisible) : true; // Ensure boolean
+					 isMapFullyVisible = state.isMapFullyVisible !== undefined ? Boolean(state.isMapFullyVisible) : false; // NEW: Update map visibility state (Ensure boolean)
 
 
-                     const loadedSizeKey = Object.keys(gridSizeOptions).find(
-                         key => gridSizeOptions[key].width === currentGridWidthCells &&
-                                gridSizeOptions[key].height === currentGridHeightCells
-                     ) || 'small';
-                     gridSizeSelect.value = loadedSizeKey;
+					 const loadedSizeKey = Object.keys(gridSizeOptions).find(
+						 key => gridSizeOptions[key].width === currentGridWidthCells &&
+								gridSizeOptions[key].height === currentGridHeightCells
+					 ) || 'small';
+					 gridSizeSelect.value = loadedSizeKey;
 
-                     // Update button texts based on loaded state ONLY IF DM
-                     toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
-                     if (currentRole === 'dm' && toggleAllVisibleButton) { // Ensure DM role before trying to update DM button text
-                          toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
-                     }
+					 // --- ADDED: Update button text and class based on loaded state (DM only) ---
+					 // This runs after a full state import/update. The role should already be set.
+					 if (currentRole === 'dm') { // Check if user is DM before touching DM-only buttons
+						 if (toggleGridButton) { // Check if button element exists
+							toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+							toggleGridButton.classList.toggle('feature-active', !isGridVisible); // Active when grid is HIDDEN
+						 }
+						 if (toggleAllVisibleButton) { // Check if button element exists
+							toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+							toggleAllVisibleButton.classList.toggle('feature-active', isMapFullyVisible); // Active when map is FULLY VISIBLE
+						 }
+					 }
+					 // --- END ADDED ---
 
-                     tokensData.forEach(preloadTokenImage); // Preload images for all tokens
-                     loadBackgroundImage(backgroundImageUrl);
 
-                     maskDirty = true; // State updated, need to calculate and build mask
-                     resizeCanvas(); // Ensure canvas size and mask canvas size are set, calls drawGrid
-                     // drawGrid is called recursively
-                     console.log("Full state update received and processed.");
-                     isLoading = false; // Finished loading/processing
-                });
+					 tokensData.forEach(preloadTokenImage); // Preload images for all tokens
+					 loadBackgroundImage(backgroundImageUrl);
+
+					 maskDirty = true; // State updated, need to calculate and build mask
+					 resizeCanvas(); // Ensure canvas size and mask canvas size are set, calls drawGrid
+					 // drawGrid is called recursively
+					 console.log("Full state update received and processed.");
+					 isLoading = false; // Finished loading/processing
+				});
 
 
 				socket.on('updateTokens', (tokens) => {
@@ -3490,27 +3525,30 @@
 
 				socket.on('updateGridVisibility', (newIsGridVisible) => {
 					isGridVisible = newIsGridVisible;
-					if (currentRole === 'dm') {
+					if (currentRole === 'dm' && toggleGridButton) {
 						toggleGridButton.textContent = isGridVisible ? 'Hide Grid' : 'Show Grid';
+						toggleGridButton.classList.toggle('feature-active', !isGridVisible); // Active when grid is HIDDEN
 					}
+					maskDirty = true; // Grid visibility changed, need mask update
 					drawGrid();
 				});
 				
-				// NEW Socket Listener: Handle map visibility toggle state updates
-                socket.on('mapVisibilityToggled', (newState) => {
-                    isMapFullyVisible = Boolean(newState); // Ensure the state is a boolean
-                    console.log(`Map visibility toggle state received: ${isMapFullyVisible}`);
+				// Socket Listener: Handle map visibility toggle state updates
+				socket.on('mapVisibilityToggled', (newState) => {
+					isMapFullyVisible = Boolean(newState); // Ensure the state is a boolean
+					console.log(`Map visibility toggle state received: ${isMapFullyVisible}`);
 
-                    // Update button text on DM client, regardless of who sent the update
-                    // We check for `currentRole === 'dm'` here because only DMs see the button
-                    if (currentRole === 'dm' && toggleAllVisibleButton) { // Added the check back
-                         toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
-                    }
-                    // Flag the mask as dirty because the visibility state has changed, requiring a rebuild/clear
-                    maskDirty = true;
-                    drawGrid(); // Request a redraw to apply the new visibility state
-                });
-
+					// --- ADDED: Update button text and class ---
+					// We check for `currentRole === 'dm'` here because only DMs see the button
+					if (currentRole === 'dm' && toggleAllVisibleButton) { // Added the check back
+						toggleAllVisibleButton.textContent = isMapFullyVisible ? 'Hide Map' : 'Show Map';
+						toggleAllVisibleButton.classList.toggle('feature-active', isMapFullyVisible); // Active when map is FULLY VISIBLE
+					}
+					// --- END ADDED ---
+					// Flag the mask as dirty because the visibility state has changed, requiring a rebuild/clear
+					maskDirty = true;
+					drawGrid(); // Request a redraw to apply the visibility state
+				});
 
 				socket.on('updateBackground', (url) => {
 					loadBackgroundImage(url); // loadBackgroundImage already calls drawGrid
