@@ -939,6 +939,7 @@
 				let brightLightCells = new Set(); // Cells visible in bright light from light sources
                 let dimLightCells = new Set();    // Cells visible in dim light from light sources (but not bright)
                 let playerVisionCells = new Set(); // Cells visible by player's own inherent vision (e.g., darkvision)
+				let playerOwnedCells = new Set(); // NEW: Cells occupied by the current player's owned tokens
                 let visibilityMaskCanvas = document.createElement('canvas'); // Offscreen canvas for mask
                 let visibilityMaskCtx = visibilityMaskCanvas.getContext('2d');
                 let maskDirty = true; // Flag to indicate if the mask needs recalculation
@@ -1169,235 +1170,229 @@
                     return true; // Reached the target cell without hitting a wall
                 }
 
+                // --- Calculate Visible Cells (Modified for Layered Light/Vision and Owned Cells) ---
+				function calculateVisibleCells() {
+					// Only calculate complex visibility for players AND when "All Visible" is OFF
+					if (currentRole === 'dm' || isMapFullyVisible) {
+						// DM sees everything, or All Visible is on - no masks needed
+						brightLightCells.clear();
+						dimLightCells.clear();
+						playerVisionCells.clear();
+						playerOwnedCells.clear(); // Also clear player owned cells set
+						// Setting maskDirty = true here ensures buildVisibilityMask clears the mask if needed
+						maskDirty = true;
+						return;
+					}
 
-                // --- Calculate Visible Cells (Modified for Layered Light/Vision) ---
-                function calculateVisibleCells() {
-                    // NEW: Only calculate for players AND when "All Visible" is OFF
-                    if (currentRole === 'dm' || isMapFullyVisible) {
-                        // DM sees everything, or All Visible is on - no masks needed
-                        brightLightCells.clear();
-                        dimLightCells.clear();
-                        playerVisionCells.clear();
-                        // Setting maskDirty = true here ensures buildVisibilityMask clears the mask if needed
-                        maskDirty = true;
-                        return;
-                    }
+					// Clear previous visibility sets
+					brightLightCells.clear();
+					dimLightCells.clear();
+					playerVisionCells.clear();
+					playerOwnedCells.clear(); // Clear player owned cells set
 
-                    // Clear previous visibility sets
-                    brightLightCells.clear();
-                    dimLightCells.clear();
-                    playerVisionCells.clear(); // Clear player inherent vision set
+					// Temporary sets to manage overlaps easily before finalizing
+					const potentialBrightCells = new Set();
+					const potentialDimCells = new Set();
+					const potentialPlayerInherentCells = new Set();
 
-                    // Temporary sets to manage overlaps easily before finalizing
-                    const potentialBrightCells = new Set();
-                    const potentialDimCells = new Set();
-                    const potentialPlayerInherentCells = new Set(); // Temporary set for player's raw inherent vision
+					const lightSources = tokensData.filter(token => token.isLightSource);
+					const playerTokens = tokensData.filter(token =>
+						token.owner === username || (token.isMinion && token.parentOwner === username)
+					);
 
+					const gridWidth = currentGridWidthCells;
+					const gridHeight = currentGridHeightCells;
 
-                    const lightSources = tokensData.filter(token => token.isLightSource);
-                    const playerTokens = tokensData.filter(token =>
-                        token.owner === username || (token.isMinion && token.parentOwner === username)
-                    );
-
-                    const gridWidth = currentGridWidthCells;
-                    const gridHeight = currentGridHeightCells;
-
-                    // 1. Calculate light source visibility (Bright and Dim ranges)
-                    lightSources.forEach(sourceToken => {
-                         const sx = sourceToken.x;
-                         const sy = sourceToken.y;
-                         // Use || 0 for safety, ensure dimRange is at least brightRange
-                         const brightRange = sourceToken.brightRange || 0;
-                         const dimRange = Math.max(brightRange, sourceToken.dimRange || 0); // Dim range must be >= bright range
-
-
-                         if (dimRange <= 0) return; // Light source doesn't illuminate
-
-                         // Check cells within the total dim light radius bounding box (inclusive)
-                         const startCheckX = Math.max(0, sx - dimRange);
-                         const endCheckX = Math.min(gridWidth - 1, sx + dimRange);
-                         const startCheckY = Math.max(0, sy - dimRange);
-                         const endCheckY = Math.min(gridHeight - 1, sy + dimRange);
+					// --- Populate playerOwnedCells set ---
+					 playerTokens.forEach(token => {
+						 const tokenSize = token.size || 1;
+						 for (let dy = 0; dy < tokenSize; dy++) {
+							 for (let dx = 0; dx < tokenSize; dx++) {
+								 const cellX = token.x + dx;
+								 const cellY = token.y + dy;
+								 if (cellX >= 0 && cellX < gridWidth && cellY >= 0 && cellY < gridHeight) {
+									 playerOwnedCells.add(`${cellX},${cellY}`);
+								 }
+							 }
+						 }
+					 });
 
 
-                         for (let y = startCheckY; y <= endCheckY; y++) {
-                             for (let x = startCheckX; x <= endCheckX; x++) {
-                                 // Using Chebyshev distance (max of horizontal/vertical distance) for radius
-                                 const dist = Math.max(Math.abs(x - sx), Math.abs(y - sy));
-
-                                 if (dist > dimRange) {
-                                     continue; // Outside total light radius
-                                 }
-
-                                 // Check Line of Sight from the light source's cell center to the target cell's center
-                                 // isLOSClear correctly checks if a wall cell is on the path.
-                                 if (isLOSClear(sx, sy, x, y, walls, gridWidth, gridHeight)) {
-                                     const cellKey = `${x},${y}`;
-                                     if (dist <= brightRange) {
-                                         potentialBrightCells.add(cellKey);
-                                     } else { // dist > brightRange && dist <= dimRange
-                                         potentialDimCells.add(cellKey);
-                                     }
-                                 }
-                             }
-                         }
-                    });
+					// 1. Calculate light source visibility (Bright and Dim ranges)
+					lightSources.forEach(sourceToken => {
+						 const sx = sourceToken.x;
+						 const sy = sourceToken.y;
+						 // Use || 0 for safety, ensure dimRange is at least brightRange
+						 const brightRange = sourceToken.brightRange || 0;
+						 const dimRange = Math.max(brightRange, sourceToken.dimRange || 0); // Dim range must be >= bright range
 
 
-                    // 2. Calculate player token inherent vision (e.g., darkvision, normal sight without external light)
-                    // This vision determines *which* cells a player has vision over, but doesn't dictate
-                    // the *visual appearance* unless combined with light sources.
-                     playerTokens.forEach(playerToken => {
-                         const px = playerToken.x;
-                         const py = playerToken.y;
-                         const sightRadius = playerToken.sightRadius || 0; // Inherent sight radius
+						 if (dimRange <= 0) return; // Light source doesn't illuminate
 
-                         if (sightRadius <= 0) return; // Token cannot see inherently
-
-                         // Check cells within the token's inherent sight radius bounding box (inclusive)
-                         const startCheckX = Math.max(0, px - sightRadius);
-                         const endCheckX = Math.min(gridWidth - 1, px + sightRadius);
-                         const startCheckY = Math.max(0, py - sightRadius);
-                         const endCheckY = Math.min(gridHeight - 1, py + sightRadius);
-
-                         for (let y = startCheckY; y <= endCheckY; y++) {
-                              for (let x = startCheckX; x <= endCheckX; x++) {
-                                   // Using Chebyshev distance
-                                   const dist = Math.max(Math.abs(x - px), Math.abs(y - py));
-
-                                   if (dist > sightRadius) {
-                                       continue; // Outside inherent sight radius
-                                   }
-
-                                   // Check Line of Sight from the player token's cell center to the target cell's center
-                                   if (isLOSClear(px, py, x, y, walls, gridWidth, gridHeight)) {
-                                        potentialPlayerInherentCells.add(`${x},${y}`);
-                                   }
-                              }
-                         }
-                     });
+						 // Check cells within the total dim light radius bounding box (inclusive)
+						 const startCheckX = Math.max(0, sx - dimRange);
+						 const endCheckX = Math.min(gridWidth - 1, sx + dimRange);
+						 const startCheckY = Math.max(0, sy - dimRange);
+						 const endCheckY = Math.min(gridHeight - 1, sy + dimRange);
 
 
-                    // 3. Combine and finalize visibility sets based on light precedence
-                    // Bright light areas are fully visible (0% mask)
-                    brightLightCells = potentialBrightCells;
+						 for (let y = startCheckY; y <= endCheckY; y++) {
+							 for (let x = startCheckX; x <= endCheckX; x++) {
+								 // Using Chebyshev distance (max of horizontal/vertical distance) for radius
+								 const dist = Math.max(Math.abs(x - sx), Math.abs(y - sy));
 
-                    // Dim light includes cells potentially in dim light *not* already in bright light
-                    dimLightCells = new Set(); // Clear previous dim set
-                     potentialDimCells.forEach(cellKey => {
-                         if (!brightLightCells.has(cellKey)) { // Must NOT be in bright light
-                              dimLightCells.add(cellKey);
-                         }
-                     });
+								 if (dist > dimRange) {
+									 continue; // Outside total light radius
+								 }
 
-                    // Player vision includes cells potentially seen by player sight *not* in bright or dim light
-                    // These cells will be discernable (token names visible), but visually remain fog unless overridden by owned token location.
-                    playerVisionCells = new Set(); // Clear previous player vision set
-                    potentialPlayerInherentCells.forEach(cellKey => {
-                         if (!brightLightCells.has(cellKey) && !dimLightCells.has(cellKey)) {
-                             playerVisionCells.add(cellKey);
-                         }
-                    });
+								 // Check Line of Sight from the light source's cell center to the target cell's center
+								 // isLOSClear correctly checks if a wall cell is on the path.
+								 if (isLOSClear(sx, sy, x, y, walls, gridWidth, gridHeight)) {
+									 const cellKey = `${x},${y}`;
+									 if (dist <= brightRange) {
+										 potentialBrightCells.add(cellKey);
+									 } else { // dist > brightRange && dist <= dimRange
+										 potentialDimCells.add(cellKey);
+									 }
+								 }
+							 }
+						 }
+					});
 
-                    // Important: The combined set for general visibility checks (like token name display)
-                    // is Bright + Dim + Player Vision.
-                    // This ensures tokens in dark areas seen by darkvision still get their names displayed.
-                    // We don't store this explicitly as a set here, but functions like isCellKnowable
-                    // check across all three sets.
 
-                     maskDirty = true; // Mask needs to be rebuilt based on new visibility sets
-                }
+					// 2. Calculate player token inherent vision (e.g., darkvision, normal sight without external light)
+					// This vision determines *which* cells a player has vision over, but doesn't dictate
+					// the *visual appearance* unless combined with light sources.
+					 playerTokens.forEach(playerToken => {
+						 const px = playerToken.x;
+						 const py = playerToken.y;
+						 const sightRadius = playerToken.sightRadius || 0; // Inherent sight radius
 
-                                // --- Build the Visibility Mask Canvas (Corrected Logic & Fixed Typos) ---
+						 if (sightRadius <= 0) return; // Token cannot see inherently
+
+						 // Check cells within the token's inherent sight radius bounding box (inclusive)
+						 const startCheckX = Math.max(0, px - sightRadius);
+						 const endCheckX = Math.min(gridWidth - 1, px + sightRadius);
+						 const startCheckY = Math.max(0, py - sightRadius);
+						 const endCheckY = Math.min(gridHeight - 1, py + sightRadius);
+
+						 // REVISED Player Token Inherent Vision Loop (Simpler) - Corrected loop bounds
+						  for (let y = startCheckY; y <= endCheckY; y++) {
+							   for (let x = startCheckX; x <= endCheckX; x++) {
+									const dist = Math.max(Math.abs(x - px), Math.abs(y - py)); // Chebyshev distance
+
+									if (dist <= sightRadius) { // Within the sight radius bounding box
+										// Check Line of Sight from the player token's cell center to the target cell's center
+										if (isLOSClear(px, py, x, y, walls, gridWidth, gridHeight)) {
+											 potentialPlayerInherentCells.add(`${x},${y}`);
+										}
+									}
+							   }
+						  }
+					 });
+					// END REVISED Player Token Inherent Vision Loop
+
+
+					// 3. Combine and finalize visibility sets based on light precedence
+					// Bright light areas are fully visible (0% mask)
+					brightLightCells = potentialBrightCells;
+
+					// Dim light includes cells potentially in dim light *not* already in bright light
+					dimLightCells = new Set();
+					 potentialDimCells.forEach(cellKey => {
+						 if (!brightLightCells.has(cellKey)) { // Must NOT be in bright light
+							  dimLightCells.add(cellKey);
+						 }
+					 });
+
+					// Player vision includes cells potentially seen by player sight *not* in bright or dim light
+					playerVisionCells = new Set();
+					potentialPlayerInherentCells.forEach(cellKey => {
+						 if (!brightLightCells.has(cellKey) && !dimLightCells.has(cellKey)) {
+							 playerVisionCells.add(cellKey);
+						 }
+					});
+
+					 maskDirty = true; // Mask needs to be rebuilt based on new visibility sets
+				}
+
+                // --- Build the Visibility Mask Canvas (Corrected Logic & Fixed Typos) ---
                 // This function creates a mask canvas where each pixel's alpha determines visual appearance:
                 // alpha = 0   -> Fully Visible (Bright Light OR Player's OWN Token Location OR Adjacent Wall)
                 // alpha = 0.6 -> Dimmed (Dim Light)
                 // alpha = 1   -> Solid Black Fog (Not Visible at all OR Player Inherent Vision Alone)
-                function buildVisibilityMask() {
+                                            // --- Build the Visibility Mask Canvas ---
+				// This function creates a mask canvas where each pixel's alpha determines visual appearance:
+				// alpha = 0   -> Fully Visible (Bright Light OR Player's OWN Token Location OR Adjacent Wall revealed by vision/light)
+				// alpha = 0.6 -> Dimmed (Dim Light)
+				// alpha = 1   -> Solid Black Fog (Not Visible at all)
+				function buildVisibilityMask() {
+					// No mask needed for DM or when 'Show Map' is on
 					if (currentRole === 'dm' || isMapFullyVisible) {
-                        visibilityMaskCtx.clearRect(0, 0, visibilityMaskCanvas.width, visibilityMaskCanvas.height);
-                        maskDirty = false; // Mask is now clear (effectively off)
-                        return;
-                    }
-				
-                     if (!maskDirty) return; // Only rebuild if necessary
+						visibilityMaskCtx.clearRect(0, 0, visibilityMaskCanvas.width, visibilityMaskCanvas.height);
+						maskDirty = false; // Mask is now clear (effectively off)
+						return;
+					}
 
-                     const gridPixelWidth = currentGridWidthCells * gridSize;
-                     const gridPixelHeight = currentGridHeightCells * gridSize;
+					 if (!maskDirty) return; // Only rebuild if necessary
 
-                     visibilityMaskCanvas.width = gridPixelWidth;
-                     visibilityMaskCanvas.height = gridPixelHeight;
-                     visibilityMaskCtx.clearRect(0, 0, gridPixelWidth, gridPixelHeight); // Start with a fully transparent canvas
+					 const gridPixelWidth = currentGridWidthCells * gridSize;
+					 const gridPixelHeight = currentGridHeightCells * gridSize;
 
-                     const dimmingOpacity = 0.6; // Opacity for the dim areas (60% black fog overlay)
+					 visibilityMaskCanvas.width = gridPixelWidth;
+					 visibilityMaskCanvas.height = gridPixelHeight;
+					 visibilityMaskCtx.clearRect(0, 0, gridPixelWidth, gridPixelHeight); // Start with a fully transparent canvas
 
-                     // Get player-owned tokens for the override check
-                     const playerTokens = tokensData.filter(token =>
-                         token.owner === username || (token.isMinion && token.parentOwner === username)
-                     );
+					 const dimmingOpacity = 0.6; // Opacity for the dim areas (60% black fog overlay)
 
 
-                     // Iterate through all grid cells and draw the appropriate mask pixel
-                     for (let y = 0; y < currentGridHeightCells; y++) {
-                         for (let x = 0; x < currentGridWidthCells; x++) {
-                             const cellKey = `${x},${y}`;
-                             let maskOpacity = 1; // Default to full fog (opaque black)
+					 // Iterate through all grid cells and draw the appropriate mask pixel
+					 for (let y = 0; y < currentGridHeightCells; y++) {
+						 for (let x = 0; x < currentGridWidthCells; x++) {
+							 const cellKey = `${x},${y}`;
+							 let maskOpacity = 1; // Default to full fog (opaque black)
 
-                             // Determine base opacity based on light/vision precedence
-                             // Bright Light > Dim Light > Full Fog (for anything else, including Player Vision Alone)
-                             if (brightLightCells.has(cellKey)) {
-                                 maskOpacity = 0; // Fully transparent in bright light
-                             }
-                             else if (dimLightCells.has(cellKey)) {
-                                 maskOpacity = dimmingOpacity; // Semi-transparent in dim light
-                             }
-                             // Note: If the cell is only in playerVisionCells, maskOpacity remains the default 1 (solid fog).
-
-
-                             // --- START MODIFICATION ---
-                             // Check if this cell is a wall AND adjacent to an owned token
-                             // If so, make the mask transparent to reveal the underlying wall (drawn dimmed in drawGrid)
-                             // unless it's already brightly lit (which correctly sets maskOpacity to 0).
-                             if (maskOpacity > 0 && // Only modify if not already fully transparent (e.g., by bright light)
-                                 walls[y] && walls[y][x] === 1 &&
-                                 isAdjacentToOwnedPlayerToken(x, y, tokensData, username, currentRole))
-                             {
-                                 maskOpacity = 0; // Make the mask clear for adjacent walls
-                             }
-                             // --- END MODIFICATION ---
+							 // Determine base opacity based on light/vision precedence
+							 // Bright Light > Dim Light > Full Fog (for anything else)
+							 if (brightLightCells.has(cellKey)) {
+								 maskOpacity = 0; // Fully transparent in bright light
+							 }
+							 else if (dimLightCells.has(cellKey)) {
+								 maskOpacity = dimmingOpacity; // Semi-transparent in dim light
+							 }
+							 // Note: playerVisionCells themselves don't reduce mask opacity, they just make tokens knowable.
 
 
-                             // Override mask opacity if this cell is occupied by the CURRENT PLAYER's token(s)
-                             // This ensures the owned token's space is always fully clear visually.
-                             const isOwnedPlayerTokenLocation = playerTokens.some(token => {
-                                 const tokenSize = token.size || 1;
-                                 // Check all cells the token occupies
-                                 for (let dy = 0; dy < tokenSize; dy++) {
-                                     for (let dx = 0; dx < tokenSize; dx++) {
-                                         if (token.x + dx === x && token.y + dy === y) {
-                                             return true; // Cell is part of an owned token's space
-                                         }
-                                     }
-                                 }
-                                 return false;
-                             });
+							 // Override mask opacity if this cell is occupied by the CURRENT PLAYER's token(s)
+							 // This ensures the owned token's space is always fully clear visually.
+							 if (playerOwnedCells.has(cellKey)) {
+								  maskOpacity = 0; // Make player's *own* token squares fully clear, regardless of other lighting/vision
+							 }
 
-                             if (isOwnedPlayerTokenLocation) {
-                                  maskOpacity = 0; // Make player's *own* token squares fully clear, regardless of other lighting/vision
-                             }
-
-                             // Draw the mask pixel with the determined opacity (0=clear, dimmingOpacity=dim, 1=fog)
-                             visibilityMaskCtx.fillStyle = `rgba(0, 0, 0, ${maskOpacity})`;
-                             visibilityMaskCtx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
-                         }
-                     }
-
-                     maskDirty = false; // Mask is now up-to-date
-                }
+							 // Check if this cell is a wall AND it is knowable (visible by vision/light or owned token)
+							 // If so, make the mask transparent to reveal the underlying wall (drawn dimmed in drawGrid)
+							 // unless it's already fully transparent (e.g., by bright light or owned cell override).
+							 // We check `walls[y] && walls[y][x] === 1` to ensure it's actually a wall cell.
+							 // We check `isCellKnowable(x, y)` to see if the *player's vision/light* reveals this wall cell.
+							 // Note: Player-owned cells already result in maskOpacity = 0.
+							 if (maskOpacity > 0 && // Only modify if not already clear
+								 walls[y] && walls[y][x] === 1 &&
+								 isCellKnowable(x, y)) // Check if the wall cell itself is knowable
+							 {
+								 maskOpacity = 0; // Make the mask clear for wall cells that are knowable
+							 }
 
 
-								// --- Main Drawing Function ---
-								// --- Main Drawing Function ---
+							 // Draw the mask pixel with the determined opacity (0=clear, dimmingOpacity=dim, 1=fog)
+							 visibilityMaskCtx.fillStyle = `rgba(0, 0, 0, ${maskOpacity})`;
+							 visibilityMaskCtx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+						 }
+					 }
+
+					 maskDirty = false; // Mask is now up-to-date
+				}
+
+				// --- Main Drawing Function ---
 				function drawGrid() {
 					// Prevent multiple redraw calls queued up
 					if (drawPending) return;
@@ -1420,59 +1415,59 @@
 						ctx.translate(panX, panY); // Apply user pan (shifts the canvas origin)
 						ctx.scale(scale, scale); // Apply user zoom (scales subsequent drawing operations)
 
-                        // Calculate the total size of the grid area in pixels at a 1:1 scale.
-                        // This is the target area in the *transformed space* that we want to draw within.
-                        const gridPixelWidth = currentGridWidthCells * gridSize;
-                        const gridPixelHeight = currentGridHeightCells * gridSize;
+						// Calculate the total size of the grid area in pixels at a 1:1 scale.
+						// This is the target area in the *transformed space* that we want to draw within.
+						const gridPixelWidth = currentGridWidthCells * gridSize;
+						const gridPixelHeight = currentGridHeightCells * gridSize;
 
-                        // --- Set Clipping Region to the Grid Area ---
-                        // Define a rectangle for the clipping path.
-                        // The coordinates (0,0) and dimensions (gridPixelWidth, gridPixelHeight)
-                        // are interpreted in the *current transformed coordinate system*.
-                        // This rectangle represents the visual bounds of the grid on the screen.
-                        ctx.beginPath(); // Start a new path for the clipping shape
-                        ctx.rect(0, 0, gridPixelWidth, gridPixelHeight); // Define the rectangle shape
-                        ctx.clip(); // Apply this path as the current clipping path.
-                                    // ONLY drawing operations that occur *after* this `clip()` call
-                                    // will be restricted to the area defined by this path.
-                                    // The clipping path itself is also subject to the current transform.
+						// --- Set Clipping Region to the Grid Area ---
+						// Define a rectangle for the clipping path.
+						// The coordinates (0,0) and dimensions (gridPixelWidth, gridPixelHeight)
+						// are interpreted in the *current transformed coordinate system*.
+						// This rectangle represents the visual bounds of the grid on the screen.
+						ctx.beginPath(); // Start a new path for the clipping shape
+						ctx.rect(0, 0, gridPixelWidth, gridPixelHeight); // Define the rectangle shape
+						ctx.clip(); // Apply this path as the current clipping path.
+									// ONLY drawing operations that occur *after* this `clip()` call
+									// will be restricted to the area defined by this path.
+									// The clipping path itself is also subject to the current transform.
 
 
 						// --- Draw Content Within the Clipped Grid Area ---
 
 						// 1. Draw Background Image (will be clipped to the grid area)
-                        //    This uses the 'cover' logic to scale the image to fit the grid aspect ratio
+						//    This uses the 'cover' logic to scale the image to fit the grid aspect ratio
 						if (backgroundImage && backgroundImage.complete && backgroundImage.naturalWidth !== 0) {
 							const gridAspectRatio = gridPixelWidth / gridPixelHeight;
 							const imageAspectRatio = backgroundImage.width / backgroundImage.height;
 
 							let drawWidth, drawHeight, offsetX, offsetY;
 
-                            // Calculate dimensions to make the image "cover" the entire grid area.
-                            // One dimension will match the grid, the other will be larger or equal.
-                            if (imageAspectRatio > gridAspectRatio) {
-                                // Image is proportionally wider than grid: Scale height to match grid, width will be larger.
-                                drawHeight = gridPixelHeight;
-                                drawWidth = drawHeight * imageAspectRatio;
-                            } else {
-                                // Image is proportionally taller or same as grid: Scale width to match grid, height will be larger or equal.
-                                drawWidth = gridPixelWidth;
-                                drawHeight = drawWidth / imageAspectRatio;
-                            }
+							// Calculate dimensions to make the image "cover" the entire grid area.
+							// One dimension will match the grid, the other will be larger or equal.
+							if (imageAspectRatio > gridAspectRatio) {
+								// Image is proportionally wider than grid: Scale height to match grid, width will be larger.
+								drawHeight = gridPixelHeight;
+								drawWidth = drawHeight * imageAspectRatio;
+							} else {
+								// Image is proportionally taller or same as grid: Scale width to match grid, height will be larger or equal.
+								drawWidth = gridPixelWidth;
+								drawHeight = drawWidth / imageAspectRatio;
+							}
 
-                            // Calculate offset to center the scaled image within the grid area (0,0 to gridPixelWidth, gridPixelHeight).
-                            // If the image dimension is larger than the grid, the offset will be negative, positioning the image partially outside the clip area, which gets cropped.
-                            offsetX = (gridPixelWidth - drawWidth) / 2;
-                            offsetY = (gridPixelHeight - drawHeight) / 2;
+							// Calculate offset to center the scaled image within the grid area (0,0 to gridPixelWidth, gridPixelHeight).
+							// If the image dimension is larger than the grid, the offset will be negative, positioning the image partially outside the clip area, which gets cropped.
+							offsetX = (gridPixelWidth - drawWidth) / 2;
+							offsetY = (gridPixelHeight - drawHeight) / 2;
 
 							// Draw the image. Its destination rectangle (offsetX, offsetY, drawWidth, drawHeight)
 							// is relative to the transformed origin (which is the top-left of the grid area in this transformed space).
-                            // The image will be automatically clipped by the `ctx.clip()` applied above.
+							// The image will be automatically clipped by the `ctx.clip()` applied above.
 							ctx.drawImage(backgroundImage, offsetX, offsetY, drawWidth, drawHeight);
 						}
 
 						// 2. Draw Grid Lines (will be clipped)
-                        //    These are drawn after the background layer.
+						//    These are drawn after the background layer.
 						if (isGridVisible) {
 							const gridColor = document.body.classList.contains('dark-mode') ? 'rgba(85, 85, 85, 0.7)' : 'rgba(204, 204, 204, 0.7)';
 							ctx.strokeStyle = gridColor;
@@ -1497,145 +1492,166 @@
 							}
 						}
 
-                        // 3. Draw Walls (will be clipped)
-                        //    These are drawn after grid lines, before tokens.
-                        // --- MODIFIED WALL DRAWING FOR ADJACENCY HIGHLIGHT ---
-                        let wallColorBase = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)'; // Standard wall color/opacity
-                        let wallColorAdjacent = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 255, 0.6)'; // Slightly less opaque for adjacent
-                        const isPlayer = currentRole === 'player';
+						// 3. Draw Walls (will be clipped)
+						//    These are drawn after grid lines, before tokens.
+						// --- MODIFIED WALL DRAWING FOR ADJACENCY HIGHLIGHT ---
+						let wallColorBase = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)'; // Standard wall color/opacity
+						let wallColorAdjacent = document.body.classList.contains('dark-mode') ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 255, 0.6)'; // Slightly less opaque for adjacent
+						const isPlayer = currentRole === 'player';
 
-                        for (let y = 0; y < currentGridHeightCells; y++) {
-                            for (let x = 0; x < currentGridWidthCells; x++) {
-                                if (walls[y] && walls[y][x] === 1) {
-                                    // Determine color/opacity based on role and adjacency
-                                    let wallFillColor = wallColorBase;
-                                    if (isPlayer && isAdjacentToOwnedPlayerToken(x, y, tokensData, username, currentRole)) {
-                                        // Only highlight if it's a player and the wall is adjacent to their token(s)
-                                         wallFillColor = wallColorAdjacent;
-                                    }
+						for (let y = 0; y < currentGridHeightCells; y++) {
+							for (let x = 0; x < currentGridWidthCells; x++) {
+								if (walls[y] && walls[y][x] === 1) {
+									// Determine color/opacity based on role and adjacency
+									let wallFillColor = wallColorBase;
+									// Only highlight adjacent walls for players when FoW is active ('Show Map' is OFF)
+									if (isPlayer && !isMapFullyVisible && isAdjacentToOwnedPlayerToken(x, y, tokensData, username, currentRole)) {
+										 wallFillColor = wallColorAdjacent;
+									}
 
-                                    ctx.fillStyle = wallFillColor;
-                                    // Coordinates are relative to transformed origin (top-left of grid area)
-                                    ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
-                                }
-                            }
-                        }
+									ctx.fillStyle = wallFillColor;
+									// Coordinates are relative to transformed origin (top-left of grid area)
+									ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+								}
+							}
+						}
 
-						// 4. Draw Tokens (will be clipped)
-                        //    These are drawn after walls.
+						// --- START FOW CALCULATION FOR PLAYERS ---
+						// Calculate visibility sets *before* drawing tokens or names for players under FoW
+						if (currentRole === 'player' && !isMapFullyVisible) {
+							// Only calculate if maskDirty is true, otherwise reuse previous calculation
+							if (maskDirty) { // We flag maskDirty whenever visibility criteria change
+								calculateVisibleCells(); // This updates brightLightCells, dimLightCells, playerVisionCells, playerOwnedCells
+							}
+						} else {
+							// Clear sets if not player or Show Map is on, ensuring isTokenKnowable works correctly
+							brightLightCells.clear();
+							dimLightCells.clear();
+							playerVisionCells.clear();
+							playerOwnedCells.clear();
+						}
+						// --- END FOW CALCULATION ---
+
+
+						// --- Draw Tokens (will be clipped) ---
+						//    These are drawn after walls.
 						tokensData.forEach((tokenData, index) => {
-							// Save the current state *including* the main pan/zoom and the grid clipping path
-							ctx.save();
-							const tokenSize = tokenData.size || 1;
-							// Calculate token top-left position relative to transformed origin (top-left of grid area)
-							const x = tokenData.x * gridSize;
-							const y = tokenData.y * gridSize;
-							const width = gridSize * tokenSize;
-							const height = gridSize * tokenSize;
-							const rotation = (tokenData.rotation || 0) * Math.PI / 180;
-							const isSelected = index === hoveredTokenIndex || index === draggedTokenIndex;
-							let hpPercentage = 1;
-							const isLowHealth = tokenData.maxHP > 0 && tokenData.hp !== undefined && tokenData.hp / tokenData.maxHP < 0.25;
+							// Decide if the token should be drawn for this client
+							let shouldDrawToken = false;
+							const isOwner = tokenData.owner === username || (tokenData.isMinion && tokenData.parentOwner === username);
 
-							// Translate origin to the token's center, relative to the current transformed space (the grid area)
-							ctx.translate(x + width / 2, y + height / 2);
-							ctx.rotate(rotation);
+							if (currentRole === 'dm') {
+								shouldDrawToken = true; // DM sees all tokens
+							} else { // Player role
+								if (isMapFullyVisible) {
+									shouldDrawToken = true; // Player sees all tokens if DM has 'Show Map' on
+								} else { // Standard player FoW is active (visibility sets populated above)
+									// Player sees tokens they own, OR tokens that are knowable through FoW/light calculation
+									shouldDrawToken = isOwner || isTokenKnowable(tokenData); // Use the calculated isTokenKnowable here
+								}
+							}
 
-							// Drawing coordinates are relative to the token's center
-							const drawX = -width / 2;
-							const drawY = -height / 2;
+							if (shouldDrawToken) {
+								// Save the current state *including* the main pan/zoom and the grid clipping path
+								ctx.save(); // <--- Moved ctx.save() inside the draw condition
 
-							// --- DRAW GLOW EFFECT FIRST (if applicable) ---
-							// ... (Glow drawing logic using drawX, drawY, width, height - uses current transform & clip) ...
-                            if (isSelected || isLowHealth) {
-                                 const glowStrength = Math.sin(glowFrame * Math.PI * 2) * 0.2 + 0.8;
-                                 const sizeFactor = Math.min(1 / tokenSize, 1);
-                                 const glowMultiplier = 1 + sizeFactor * 0.8;
+								const tokenSize = tokenData.size || 1;
+								// Calculate token top-left position relative to transformed origin (top-left of grid area)
+								const x = tokenData.x * gridSize;
+								const y = tokenData.y * gridSize;
+								const width = gridSize * tokenSize;
+								const height = gridSize * tokenSize;
+								const rotation = (tokenData.rotation || 0) * Math.PI / 180;
+								const isSelected = index === hoveredTokenIndex || index === draggedTokenIndex;
+								let hpPercentage = 1;
+								const isLowHealth = tokenData.maxHP > 0 && tokenData.hp !== undefined && tokenData.hp / tokenData.maxHP < 0.25;
 
-                                 ctx.shadowColor = isSelected
-                                     ? (document.body.classList.contains('dark-mode') ? 'rgba(150, 150, 255, 0.8)' : 'rgba(0, 0, 255, 0.6)')
-                                     : 'rgba(255, 50, 50, 0.8)';
+								// Translate origin to the token's center, relative to the current transformed space (the grid area)
+								ctx.translate(x + width / 2, y + height / 2);
+								ctx.rotate(rotation);
 
-                                 ctx.shadowBlur = 50 * glowStrength * glowMultiplier / scale; // Scale blur inversely with zoom
+								// Drawing coordinates are relative to the token's center
+								const drawX = -width / 2;
+								const drawY = -height / 2;
 
-                                 const baseScale = 1.0;
-                                 const pulseScale = baseScale + (glowStrength * 0.08 * sizeFactor);
-                                 ctx.scale(pulseScale, pulseScale);
+								// --- DRAW GLOW EFFECT FIRST (if applicable) ---
+								// ... (Your existing glow drawing logic using drawX, drawY, width, height - uses current transform & clip) ...
+								if (isSelected || isLowHealth) {
+									const glowStrength = Math.sin(glowFrame * Math.PI * 2) * 0.2 + 0.8;
+									const sizeFactor = Math.min(1 / tokenSize, 1);
+									const glowMultiplier = 1 + sizeFactor * 0.8;
 
-                                 ctx.fillStyle = ctx.shadowColor;
-                                 if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fill(); }
-                                 else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fill(); }
+									ctx.shadowColor = isSelected
+										? (document.body.classList.contains('dark-mode') ? 'rgba(150, 150, 255, 0.8)' : 'rgba(0, 0, 255, 0.6)')
+										: 'rgba(255, 50, 50, 0.8)';
 
-                                 ctx.shadowBlur = 0;
-                                 ctx.shadowColor = 'transparent';
-                            }
+									ctx.shadowBlur = 50 * glowStrength * glowMultiplier / scale; // Scale blur inversely with zoom
 
-                            // --- DRAW TOKEN IMAGE/COLOR (ON TOP) ---
-                            if (tokenSize === 1) {
-                                ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.clip();
-                                if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
-                            } else {
-                                const radius = width * 0.15;
-                                ctx.beginPath();
-                                ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius);
-                                ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height);
-                                ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius);
-                                ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
-                                ctx.closePath();
-                                ctx.save(); ctx.clip();
-                                if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
-                                ctx.restore();
-                            }
+									const baseScale = 1.0;
+									const pulseScale = baseScale + (glowStrength * 0.08 * sizeFactor);
+									ctx.scale(pulseScale, pulseScale);
 
-                            // --- APPLY RED TINT (ON TOP of image/color) ---
-                            if (tokenData.maxHP > 0 && tokenData.hp !== undefined) {
-                                 hpPercentage = Math.max(0, Math.min(1, tokenData.hp / tokenData.maxHP)); const redTint = 1 - hpPercentage;
-                                 if (redTint > 0) {
-                                     ctx.globalCompositeOperation = 'source-atop';
-                                      if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
-                                      else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
-                                     ctx.globalCompositeOperation = 'source-over';
-                                 }
-                            }
+									ctx.fillStyle = ctx.shadowColor;
+									if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fill(); }
+									else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fill(); }
 
-                            // --- DRAW SELECTION OUTLINE (ON TOP of everything) ---
-                            if (isSelected) {
-                                 ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'cyan' : 'blue';
-                                 ctx.lineWidth = 2 / scale;
-                                  if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.stroke(); }
-                                  else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.stroke(); }
-                            }
+									ctx.shadowBlur = 0;
+									ctx.shadowColor = 'transparent';
+								}
 
-							ctx.restore(); // Restore the state saved just for this token
+								// --- DRAW TOKEN IMAGE/COLOR (ON TOP) ---
+								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
+
+
+								// --- APPLY RED TINT (ON TOP of image/color) ---
+								if (tokenData.maxHP > 0 && tokenData.hp !== undefined) {
+									 hpPercentage = Math.max(0, Math.min(1, tokenData.hp / tokenData.maxHP)); const redTint = 1 - hpPercentage;
+									 if (redTint > 0) {
+										 ctx.globalCompositeOperation = 'source-atop';
+										  if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
+										  else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
+										 ctx.globalCompositeOperation = 'source-over';
+									 }
+								}
+
+								// --- DRAW SELECTION OUTLINE (ON TOP of everything) ---
+								if (isSelected) {
+									 ctx.strokeStyle = document.body.classList.contains('dark-mode') ? 'cyan' : 'blue';
+									 ctx.lineWidth = 2 / scale;
+									  if (tokenSize === 1) { ctx.beginPath(); ctx.arc(0, 0, width / 2, 0, Math.PI * 2); ctx.stroke(); }
+									  else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.stroke(); }
+								}
+
+								ctx.restore(); // Restore the state saved just for this token
+							}
+							// If !shouldDrawToken, nothing is drawn and ctx.save()/ctx.restore() were skipped, which is correct.
 						});
 
 
 						// --- Apply Visibility Mask (will be clipped) ---
-                        // Only apply mask for players. It will be clipped by the grid area clip path.
-                        if (currentRole === 'player') {
-                             // Recalculate visible cells and build mask if needed
-                             if (maskDirty) {
-                                 calculateVisibleCells(); // This updates brightLightCells, dimLightCells, playerVisionCells
-                                 buildVisibilityMask(); // Builds a mask with varying transparency
-                             }
-
-                             // Draw the mask canvas over the grid area (0,0 to gridPixelWidth, gridPixelHeight)
-                             // It will be clipped by the grid area clip path.
-                             ctx.drawImage(visibilityMaskCanvas, 0, 0, gridPixelWidth, gridPixelHeight);
-                        } else {
-                             // DM has no mask, but we still need the glow animation loop
-                             maskDirty = false; // Ensure maskDirty is false for DM
-                        }
+						// Only apply mask for players. It will be clipped by the grid area clip path.
+						if (currentRole === 'player' && !isMapFullyVisible) { // Only apply mask when player and Show Map is OFF
+							 // Recalculate and build mask if needed (maskDirty checked at the start of the player block)
+							 if (maskDirty) {
+								 buildVisibilityMask(); // Builds a mask with varying transparency using the sets calculated above
+							 }
+							 // Draw the mask canvas over the grid area (0,0 to gridPixelWidth, gridPixelHeight)
+							 // It will be clipped by the grid area clip path.
+							 ctx.drawImage(visibilityMaskCanvas, 0, 0, gridPixelWidth, gridPixelHeight);
+						} else {
+							 // DM or Player with Show Map ON: ensure mask is effectively off (cleared in buildVisibilityMask)
+							 maskDirty = false; // Ensure flag is false when mask isn't being used/drawn
+						}
 
 
 						// Restore the canvas state saved at the beginning.
-                        // This removes the main pan/zoom transformations and the grid clipping path.
+						// This removes the main pan/zoom transformations and the grid clipping path.
 						ctx.restore();
 
 
 						// Update token names (DOM elements, drawn outside the canvas)
-                        // This happens after the canvas drawing is complete.
-                        // Token names are *not* subject to canvas clipping, they are separate HTML elements.
+						// This happens after the canvas drawing is complete.
+						// Token names are *not* subject to canvas clipping, they are separate HTML elements.
 						updateTokenNames();
 						drawPending = false;
 
@@ -1670,208 +1686,199 @@
 				// --- Helper to check if a cell is visible (knowable) to the current player ---
 				// This function determines if a cell is *knowable* (can see tokens/walls there), not its visual brightness.
                 // Used for interaction checks and general token knowability.
+				// --- Helper to check if a cell is visible (knowable) under FOW rules ---
+				// Does NOT consider DM role or isMapFullyVisible here.
+				// Assumes necessary visibility sets (brightLightCells, dimLightCells, playerVisionCells, playerOwnedCells) are globally available.
 				function isCellKnowable(x, y) {
-					// NEW: If DM or All Visible is ON, any cell is knowable
-					if (currentRole === 'dm' || isMapFullyVisible) return true;
 					const cellKey = `${x},${y}`;
-					// A cell is *knowable* if it's in bright, dim, OR player vision areas
-					// Player's own squares are also knowable (and visually clear)
-					const isOwnedPlayerTokenLocation = tokensData.filter(token =>
-                         token.owner === username || (token.isMinion && token.parentOwner === username)
-                    ).some(token => {
-                        const tokenSize = token.size || 1;
-                         for (let dy = 0; dy < tokenSize; dy++) {
-                             for (let dx = 0; dx < tokenSize; dx++) {
-                                 if (token.x + dx === x && token.y + dy === y) {
-                                     return true;
-                                 }
-                             }
-                         }
-                         return false;
-                    });
-
-					return brightLightCells.has(cellKey) || dimLightCells.has(cellKey) || playerVisionCells.has(cellKey) || isOwnedPlayerTokenLocation;
+					// A cell is *knowable* if it's in bright, dim, OR player vision areas, OR is occupied by a player's own token.
+					return brightLightCells.has(cellKey) || dimLightCells.has(cellKey) || playerVisionCells.has(cellKey) || playerOwnedCells.has(cellKey);
 				}
 
-                // --- Helper to check if any part of a token is knowable ---
-                // Used for interaction checks and filtering tokens for drawing/names etc.
-                 function isTokenKnowable(token) {
-                    // NEW: If DM or All Visible is ON, all tokens are knowable
-                    if (currentRole === 'dm' || isMapFullyVisible) return true;
-						const tokenSize = token.size || 1;
-						// An owned token is always considered "knowable" and interactable by its owner
-						if (currentRole === 'player' && (token.owner === username || (token.isMinion && token.parentOwner === username))) {
-                        return true;
-                     }
-                       // Otherwise, check if any cell it occupies is knowable (visible by any light or inherent vision)
-                      for (let dy = 0; dy < tokenSize; dy++) {
-                          for (let dx = 0; dx < tokenSize; dx++) {
-                              if (isCellKnowable(token.x + dx, token.y + dy)) { // Use isCellKnowable here
-                                   return true;
-                              }
-                          }
-                      }
-                      return false; // No part of the token is in a knowable cell
-                 }
+                // --- Helper to check if *any part* of a token is knowable under FOW rules ---
+				// Does NOT consider DM role or isMapFullyVisible here.
+				 function isTokenKnowable(token) {
+					const tokenSize = token.size || 1;
+					 for (let dy = 0; dy < tokenSize; dy++) {
+						 for (let dx = 0; dx < tokenSize; dx++) {
+							 const cellX = token.x + dx;
+							 const cellY = token.y + dy;
+							 // Check boundaries before calling isCellKnowable
+							 if (cellX >= 0 && cellX < currentGridWidthCells && cellY >= 0 && cellY < currentGridHeightCells) {
+								if (isCellKnowable(cellX, cellY)) {
+									return true; // Found at least one knowable cell
+								}
+							}
+						}
+					}
+					return false; // No occupied cell is knowable
+				}
 
 
 				function updateTokenNames() {
 					// Remove existing token names
 					document.querySelectorAll('.token-name').forEach(el => el.remove());
 
-					// Only show names at sufficient zoom OR if All Visible is ON
-					const zoomThreshold = 1.0; // Show all names above this scale
 					const minDistance = 40; // Minimum pixel distance between names
 
-                    const visibleNames = [];
+					const visibleNames = [];
 
-					// Always include hovered/dragged token name if it's NAME-ELIGIBLE and knowable/owned/DM view
-					const importantTokenIndex = (hoveredTokenIndex !== -1) ? hoveredTokenIndex : draggedTokenIndex;
-					const importantToken = (importantTokenIndex !== -1) ? tokensData[importantTokenIndex] : null;
+					// Determine which tokens' names should potentially be displayed
+					tokensData.forEach(tokenData => {
+						// Decide if this token's name should be visible to the *current client*
+						let shouldDisplayName = false;
+						const isOwner = tokenData.owner === username || (tokenData.isMinion && tokenData.parentOwner === username);
 
-                    // Determine if the important token's name should be displayed (using the already updated isTokenKnowable)
-                    const isImportantTokenNameVisible = importantToken ? isTokenKnowable(importantToken) : false;
-
-
-                    if (importantToken && isImportantTokenNameVisible) {
-                         const tokenSize = importantToken.size || 1;
-                         // Position name centered horizontally above the token's center X
-                         const canvasX_center = (importantToken.x + tokenSize / 2) * gridSize; // Canvas X center of the token
-                         const canvasY_top = importantToken.y * gridSize; // Canvas Y top of the token bounding box
-
-                         const screenX_center = canvasX_center * scale + panX;
-                         const screenY_top = canvasY_top * scale + panY;
-
-                         visibleNames.push({ tokenData: importantToken, screenX: screenX_center, screenY_top: screenY_top, priority: 2 }); // Store screenX as center, screenY_top as top
-                    }
-
-                    // Process other tokens: Show names if zoom is sufficient OR if All Visible is ON
-					if (scale >= zoomThreshold || isMapFullyVisible) { // Corrected condition here
-						tokensData.forEach(tokenData => { // Iterate through ALL tokens
-							// Skip if already added (importantToken)
-							if (importantToken && importantToken.id === tokenData.id) return;
-							if (!tokenData.name) return; // Skip tokens with no name
-
-                            // Determine if the token's name should be visible for THIS client (using isTokenKnowable)
-                            let isNameVisible = isTokenKnowable(tokenData);
-
-
-							if (isNameVisible) {
-                                // Calculate screen position - use token center X and token top Y
-                                const tokenSize = tokenData.size || 1;
-                                const canvasX_center = (tokenData.x + tokenSize / 2) * gridSize; // Canvas X center of the token
-                                const canvasY_top = tokenData.y * gridSize; // Canvas Y top of the token bounding box
-
-                                const screenX_center = canvasX_center * scale + panX;
-                                const screenY_top = canvasY_top * scale + panY;
-
-                                // Check for overlap with names already chosen for display
-                                // Only apply overlap check if All Visible is OFF AND we're below the zoom threshold
-                                let canShow = true;
-                                if (scale < zoomThreshold && !isMapFullyVisible) { // Corrected condition here
-                                     for (const visible of visibleNames) {
-                                          // Check horizontal and vertical distance separately first for efficiency
-                                          const dx_pixels = Math.abs(screenX_center - visible.screenX);
-                                          const dy_pixels = Math.abs(screenY_top - visible.screenY_top);
-
-                                          // Re-using the simple distance check from your original code's intent.
-                                          const distance = Math.sqrt(dx_pixels * dx_pixels + dy_pixels * dy_pixels);
-                                          // Scale the minimum distance inversely with zoom
-                                          if (distance < minDistance / scale) { // Divide minDistance by scale
-                                             canShow = false;
-                                             break;
-                                          }
-                                     }
-                                }
-
-
-                                if (canShow) {
-                                    visibleNames.push({ tokenData, screenX: screenX_center, screenY_top: screenY_top, priority: 0 }); // Store screenX as center, screenY_top as top
-                                }
+						if (currentRole === 'dm') {
+							shouldDisplayName = true; // DM sees all names
+						} else { // Player role
+							if (isMapFullyVisible) { // If DM enabled All Visible
+								shouldDisplayName = true; // Player sees all names if DM has 'Show Map' on
+							} else { // Standard player FoW is active (visibility sets populated in drawGrid)
+								// Player sees their OWN token name OR other tokens' names if knowable
+								shouldDisplayName = isOwner || isTokenInBrightLight(tokenData); // Use isTokenInBrightLight here!
 							}
-						});
-					}
+						}
 
-					// --- CORRECTED SORTING LOGIC ---
-                    // Sort the names before creating and appending the divs.
-                    // Primary sort: Priority (hovered/dragged on top - zIndex 100 vs 10)
-                    // Secondary sort: Screen Y position descending (labels for lower tokens draw on top)
-                    // Tertiary sort: Screen X position ascending (labels for lefter tokens draw behind righter)
-                    visibleNames.sort((a, b) => {
-                        // Primary sort: Priority (hovered/dragged highest)
-                        if (b.priority !== a.priority) {
-                            return b.priority - a.priority;
-                        }
-                        // Secondary sort: Screen Y position (descending, so lower elements appear later/on top in DOM)
-                        if (b.screenY_top !== a.screenY_top) {
-                             return b.screenY_top - a.screenY_top;
-                        }
-                        // Tertiary sort: Screen X position (ascending, so lefter elements draw earlier/behind)
-                         return a.screenX - b.screenX;
-                    });
+						// If the name should be displayed based on the rules above
+						if (shouldDisplayName) {
+							// Calculate screen position - use token center X and token top Y
+							const tokenSize = tokenData.size || 1;
+							const canvasX_center = (tokenData.x + tokenSize / 2) * gridSize; // Canvas X center of the token
+							const canvasY_top = tokenData.y * gridSize; // Canvas Y top of the token bounding box
+
+							const screenX_center = canvasX_center * scale + panX;
+							const screenY_top = canvasY_top * scale + panY;
+
+							// Check if this is the currently hovered or dragged token for priority
+							const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
+							const isImportant = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
+							const priority = isImportant ? 2 : 0; // Priority 2 for important, 0 for others
 
 
-					visibleNames.forEach(({ tokenData, screenX, screenY_top }) => {
+							// Apply overlap check *only* if we are NOT showing all names (i.e., under standard FoW rules) AND below zoom threshold
+							let canShow = true;
+							// Overlap check applies if player, FoW is ON (Map Visible OFF), AND zoom is below threshold (using 1.0 as threshold)
+							// This prevents name clutter in dense areas under FoW unless zoomed in
+							// Also skip overlap check for important tokens (priority 2)
+							if (currentRole === 'player' && !isMapFullyVisible && scale < 1.0 && !isImportant) { // Corrected condition here
+								 for (const visible of visibleNames) {
+									  // Skip overlap check against other important tokens
+									  if (visible.priority === 2) continue;
+
+									  const dx_pixels = Math.abs(screenX_center - visible.screenX);
+									  const dy_pixels = Math.abs(screenY_top - visible.screenY_top);
+									  const distance = Math.sqrt(dx_pixels * dx_pixels + dy_pixels * dy_pixels);
+									  // Use minDistance scaled inversely by current zoom level
+									  if (distance < minDistance / scale) { // Divide minDistance by scale
+										 canShow = false;
+										 break;
+									  }
+								 }
+							}
+
+							// If allowed to show name (either by rule or passing overlap check)
+							if (canShow) {
+								// Add to list with calculated priority
+								visibleNames.push({ tokenData, screenX: screenX_center, screenY_top: screenY_top, priority: priority });
+							}
+						}
+					});
+
+					// --- Sort the names before creating and appending the divs ---
+					// Primary sort: Priority (higher value means higher priority, should be added later in DOM to appear on top)
+					// Secondary sort: Screen Y position descending (labels for lower tokens should be added later)
+					// Tertiary sort: Screen X position ascending (labels for lefter elements should be added earlier)
+					visibleNames.sort((a, b) => {
+						// Primary sort: Priority (hovered/dragged highest, put later in sort)
+						if (b.priority !== a.priority) {
+							return b.priority - a.priority; // Descending priority
+						}
+						// Secondary sort: Screen Y position (descending, so lower elements appear later/on top in DOM)
+						if (b.screenY_top !== a.screenY_top) {
+							 return b.screenY_top - a.screenY_top; // Descending Y
+						}
+						// Tertiary sort: Screen X position (ascending, so lefter elements draw earlier/behind)
+						 return a.screenX - b.screenX; // Ascending X
+					});
+
+
+					// Create and position name divs for the visible names
+					visibleNames.forEach(({ tokenData, screenX, screenY_top, priority }) => { // Include priority in destructuring
 						const nameDiv = document.createElement('div');
 						nameDiv.classList.add('token-name');
+
+						// Set text content based on role and token data
 						if (currentRole === 'dm') {
 							const hpDisplay = tokenData.maxHP > 0 && tokenData.hp !== undefined ? `${tokenData.hp}/${tokenData.maxHP}` : (tokenData.hp !== undefined ? tokenData.hp : '--/--');
 							const initDisplay = tokenData.initiative !== undefined ? tokenData.initiative : '--';
-                            const acDisplay = tokenData.ac !== undefined ? tokenData.ac : '--';
-							const sightDisplay = `Sight: ${tokenData.sightRadius || 0}`;
-                            const lightDisplay = tokenData.isLightSource ? `Light: ${tokenData.brightRange || 0}/${tokenData.dimRange || 0}` : '';
-                            // Combine stat line and light line if light source
-                            if (lightDisplay) {
-                                nameDiv.innerHTML = `${tokenData.name} (HP: ${hpDisplay}, Init: ${initDisplay}, AC: ${acDisplay}) <br> ${lightDisplay}`;
-                                nameDiv.style.lineHeight = '1.2'; // Adjust line height for multiple lines
-                            } else {
-                                nameDiv.textContent = `${tokenData.name} (HP: ${hpDisplay}, Init: ${initDisplay}, AC: ${acDisplay})`;
-                            }
-
+							const acDisplay = tokenData.ac !== undefined ? tokenData.ac : '--';
+							const lightDisplay = tokenData.isLightSource ? `Light: ${tokenData.brightRange || 0}/${tokenData.dimRange || 0}` : '';
+							if (lightDisplay) {
+								nameDiv.innerHTML = `${tokenData.name} (HP: ${hpDisplay}, Init: ${initDisplay}, AC: ${acDisplay}) <br> ${lightDisplay}`;
+								nameDiv.style.lineHeight = '1.2';
+							} else {
+								nameDiv.textContent = `${tokenData.name} (HP: ${hpDisplay}, Init: ${initDisplay}, AC: ${acDisplay})`;
+							}
 						} else {
-                            // For players, just show the name (no stats in the name tag)
-							nameDiv.textContent = tokenData.name; // This is just the name for players
+							// Players only see the basic name
+							nameDiv.textContent = tokenData.name;
 						}
 						nameDiv.dataset.tokenId = tokenData.id;
 
-                        // Append first to measure (necessary to get offsetWidth/offsetHeight) - This is still needed despite the flawed overlap check attempt
-                        document.body.appendChild(nameDiv);
+						// Append first to measure (needed for offsetWidth/offsetHeight if calculating true center)
+						document.body.appendChild(nameDiv);
 
-						// --- CORRECTED POSITIONING LOGIC ---
-                        // Set left to the token's screen center X
-                         nameDiv.style.left = `${screenX}px`;
-                        // Set top to the token's screen top Y minus a small offset.
-                        // The CSS transform translate(-50%, -100%) will then correctly
-                        // position the name's bottom-center at (screenX, screenY_top - 5).
-                         nameDiv.style.top = `${screenY_top - 5}px`; // 5px padding above token
+						// Position the name div
+						// Set left to the token's screen center X
+						 nameDiv.style.left = `${screenX}px`;
+						// Set top to the token's screen top Y minus a small offset.
+						// The CSS transform translate(-50%, -100%) will then correctly
+						// position the name's bottom-center at (screenX, screenY_top - 5).
+						 nameDiv.style.top = `${screenY_top - 5}px`; // 5px padding above token
 
 
-						// Check if this specific nameDiv's token is hovered or dragged based on original index
+						// Add hovered style and set z-index
 						const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
-						const isSelected = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
+						const isCurrentlySelected = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
 
-						// --- ADD Z-INDEX LOGIC (REMAINS THE SAME) ---
-						nameDiv.style.zIndex = '10'; // Base z-index below controls (11)
-						if (isSelected) {
-							nameDiv.classList.add('hovered'); // Add hover style class
-							nameDiv.style.zIndex = '100'; // Bring selected/hovered name to front (above other names)
+						// Use priority for z-index: Higher priority tokens (selected/dragged) get higher z-index (100). Others get 10.
+						nameDiv.style.zIndex = priority === 2 ? '100' : '10';
+
+
+						if (isCurrentlySelected) {
+							nameDiv.classList.add('hovered'); // Apply hovered style
 						} else {
-							nameDiv.style.opacity = '0.7'; // Dim non-hovered names
+							// Dim non-selected names *only when FoW is active for players*
+							// If DM, or Player with Show Map ON, keep opacity 1.0
+							if (currentRole === 'player' && !isMapFullyVisible) {
+								 nameDiv.style.opacity = '0.7'; // Dim non-hovered/non-selected names under player FoW
+							} else {
+								 nameDiv.style.opacity = '1.0'; // Full opacity when FoW is off (DM or Player + All Visible)
+							}
 						}
 					});
 				}
 
 				function getTokenAtPosition(canvasX, canvasY) {
 					// Filter tokens to only consider those that are knowable and interactable
-                    // Interaction requires ownership/DM role AND knowability (checked by isTokenKnowable)
-                    const interactiveTokens = tokensData.filter(token => {
-                         // DM can interact with any token regardless of knowability
-                         if (currentRole === 'dm') return true;
-                         // Player can interact with owned tokens IF they are knowable
-                         // The isTokenKnowable check includes an override for owned tokens
-                         const isOwner = token.owner === username || (token.isMinion && token.parentOwner === username);
-                         return isOwner && isTokenKnowable(token); // isTokenKnowable has the owned-token override
-                    });
+					// Interaction requires ownership/DM role AND visibility/knowability
+					const interactiveTokens = tokensData.filter(token => {
+						 const isOwner = token.owner === username || (token.isMinion && token.parentOwner === username);
+
+						 if (currentRole === 'dm') return true; // DM can interact with any token regardless of visibility
+
+						 // Player can only interact with owned tokens...
+						 if (isOwner) {
+							 // ...and only if they are visible on the map for the player.
+							 // If DM has 'Show Map' on, owned tokens are always interactive.
+							 if (isMapFullyVisible) return true;
+							 // If FOW is active ('Show Map' is off), player can only interact with owned tokens if they are knowable by their vision/light.
+							 return isTokenKnowable(token); // Check based on player vision/light/walls
+						 }
+
+						 return false; // Player cannot interact with non-owned tokens
+					});
 
 
 					for (let i = interactiveTokens.length - 1; i >= 0; i--) {
@@ -1890,7 +1897,7 @@
 							canvasY >= tokenY &&
 							canvasY < tokenY + tokenPixelHeight
 						) {
-							// The filter `interactiveTokens` already ensures knowability and ownership/role
+							// The filter `interactiveTokens` already ensures knowability and ownership/role for interaction
 							return { token: tokenData, index: originalIndex };
 						}
 					}

@@ -558,69 +558,78 @@ io.on('connection', (socket) => {
     });
 
     // --- Handles state import and broadcasts the new state ---
-    socket.on('importState', async (newState) => {
-        if (roleFromSocket(socket) === 'dm') {
-            try {
-                 // Basic validation of the imported state structure
-                if (!newState || !Array.isArray(newState.tokens) || !Array.isArray(newState.walls) || !newState.gridSize) {
-                     throw new Error('Invalid imported state structure');
-                }
+    // In server.js
+	socket.on('importState', async (newState) => {
+		if (roleFromSocket(socket) === 'dm') {
+			try {
+				 // Basic validation of the imported state structure
+				if (!newState || !Array.isArray(newState.tokens) || !Array.isArray(newState.walls) || !newState.gridSize) {
+					 throw new Error('Invalid imported state structure');
+				}
 
-                // Apply the imported state to the server's gameState
-                gameState.tokens = newState.tokens;
-                gameState.gridSize = newState.gridSize; // Use imported grid size
-                // Normalize imported walls based on the imported grid size
-                gameState.walls = normalizeWalls(newState.walls, gameState.gridSize.width, gameState.gridSize.height);
-                gameState.backgroundImageUrl = newState.backgroundImageUrl || '';
-                gameState.isGridVisible = newState.isGridVisible !== undefined ? newState.isGridVisible : true;
-				gameState.isMapFullyVisible = newState.isMapFullyVisible !== undefined ? newState.isMapFullyVisible : false; // NEW: Import toggle state
-
-                // Optional: Import view state if available, otherwise keep current or reset
-                gameState.viewState = newState.viewState || { scale: 1, panX: 0, panY: 0 };
-
-                // Ensure imported tokens have necessary defaults (same logic as loadState)
-                 gameState.tokens = gameState.tokens.map(token => ({
-                    ...token,
-                    maxHP: token.maxHP !== undefined ? token.maxHP : 0,
-                    hp: token.hp !== undefined ? token.hp : 0,
-                    initiative: token.initiative !== undefined ? token.initiative : 0,
-                    ac: token.ac !== undefined ? token.ac : 0,
-                    rotation: token.rotation !== undefined ? token.rotation : 0,
-                    sightRadius: token.sightRadius !== undefined ? token.sightRadius : 0, // Ensure sightRadius exists
-                    isLightSource: Boolean(token.isLightSource), // Ensure isLightSource exists and is boolean
-                    brightRange: token.brightRange !== undefined ? token.brightRange : 0, // Ensure brightRange exists
-                    dimRange: token.dimRange !== undefined ? token.dimRange : 0,         // Ensure dimRange exists
-                    isMinion: token.isMinion !== undefined ? token.isMinion : false,
-                    owner: token.owner || null,
-                    parentOwner: token.parentOwner || null,
-                     size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure size is valid number
-                    // imageUrl/backgroundColor/imageFilename should also be handled if needed for merging
-                    imageUrl: token.imageUrl || null,
-                    backgroundColor: token.backgroundColor || null,
-                    imageFilename: token.imageFilename || null,
-
-                 }));
+				// Apply the imported state to the server's gameState - assign raw parts first
+				// Ensure default values/types for top-level state properties
+				gameState.gridSize = newState.gridSize || { width: 40, height: 30 }; // Ensure gridSize is set early for wall normalization
+				gameState.backgroundImageUrl = newState.backgroundImageUrl || '';
+				gameState.isGridVisible = newState.isGridVisible !== undefined ? Boolean(newState.isGridVisible) : true;
+				gameState.isMapFullyVisible = newState.isMapFullyVisible !== undefined ? Boolean(newState.isMapFullyVisible) : false;
+				gameState.viewState = newState.viewState || { scale: 1, panX: 0, panY: 0 }; // Ensure viewState
 
 
-                // Save the imported state immediately to the file
-                await fs.writeFile(stateFilePath, JSON.stringify(gameState, null, 2));
+				// Normalize imported walls based on the imported/default grid size
+				gameState.walls = normalizeWalls(newState.walls, gameState.gridSize.width, gameState.gridSize.height);
 
-                // Broadcast the *entire* new state to all clients
-                // This will trigger the 'fullStateUpdate' handler on clients
-                io.emit('fullStateUpdate', gameState);
+				// --- ADDED: Normalize and ensure imported tokens have all properties on the SERVER ---
+				// This prevents crashes if the imported JSON is missing expected token properties
+				gameState.tokens = (newState.tokens || []).map(token => ({ // Ensure it's an array
+					...token, // Keep existing properties from the imported token
+					// Ensure numeric/boolean types and provide defaults for potentially missing properties
+					// Use gameState.gridSize after it's been set/defaulted above for position clamping
+					x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((gameState.gridSize.width || 40) / 2), // Default position
+					y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((gameState.gridSize.height || 30) / 2),
+					size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure size is valid number
+					rotation: Number.isFinite(token.rotation) ? Number(token.rotation) : 0, // Ensure numeric
+					maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
+					hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
+					initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
+					ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
+					sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
+					isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
+					brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
+					dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
+					isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
+					owner: token.owner || null, // Ensure owner is string or null
+					parentOwner: token.parentOwner || null, // Ensure parentOwner is string or null
+					// Ensure image/color properties exist
+					imageUrl: token.imageUrl || null,
+					imageFilename: token.imageFilename || null,
+					backgroundColor: token.backgroundColor || null,
+					// Add a unique ID if it's missing from the imported token (prevents issues if importing older formats or manually crafted JSON)
+					id: token.id || `${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${token.name || 'token'}`
+				}));
+				// --- END ADDED ---
 
-                // Send success notification back to the importing DM
-                socket.emit('saveSuccess', 'Game state imported and saved successfully.');
-                console.log(`Game state imported by DM "${getUsernameFromSocket(socket)}"`);
 
-            } catch (err) {
-                console.error('Error importing state:', err);
-                socket.emit('error', `Failed to import game state: ${err.message}`);
-            }
-        } else {
-             socket.emit('error', 'Only the DM can import the state.');
-        }
-    });
+				// Save the imported state immediately to the file
+				// gameState now contains the normalized tokens array
+				await fs.writeFile(stateFilePath, JSON.stringify(gameState, null, 2));
+
+				// Broadcast the *entire* new state to all clients
+				// This will trigger the 'fullStateUpdate' handler on clients, which also normalizes client-side
+				io.emit('fullStateUpdate', gameState);
+
+				// Send success notification back to the importing DM
+				socket.emit('saveSuccess', 'Game state imported and saved successfully.');
+				console.log(`Game state imported by DM "${getUsernameFromSocket(socket)}"`);
+
+			} catch (err) {
+				console.error('Error importing state:', err);
+				socket.emit('error', `Failed to import game state: ${err.message}`);
+			}
+		} else {
+			 socket.emit('error', 'Only the DM can import the state.');
+		}
+	});
 	
 	socket.on('toggleMapVisibility', (newState) => {
         // Only allow the DM to change this state
