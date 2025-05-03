@@ -40,3 +40,9 @@ Thumbs.db
 
 # Electron Forge state (optional, usually safe to ignore)
 .electron/
+
+# Ignore build artifacts and temporary files
+build/*.png
+build/*.html
+# Or just ignore everything in build if you don't commit anything from there
+# build/

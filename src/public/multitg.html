@@ -1599,9 +1599,24 @@
 									ctx.shadowColor = 'transparent';
 								}
 
+								// Inside drawGrid -> tokensData.forEach -> if (shouldDrawToken)
 								// --- DRAW TOKEN IMAGE/COLOR (ON TOP) ---
-								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) { ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height); } else { ctx.fillStyle = tokenData.backgroundColor || 'grey'; ctx.fill(); }
+								if (tokenData.imageObj && tokenData.imageObj.complete && tokenData.imageObj.naturalWidth !== 0) {
+									// Draw image (already defines its own area implicitly)
+									ctx.drawImage(tokenData.imageObj, drawX, drawY, width, height);
+								} else {
+									// *** FIX START ***
+									// Explicitly define the path for the color fill.
+									// Use the same drawX, drawY, width, height calculated earlier,
+									// which are relative to the token's translated center.
+									ctx.beginPath(); // Start a new path just for this fill operation
+									ctx.rect(drawX, drawY, width, height); // Define the rectangle path
+									// *** FIX END ***
 
+									// Now set color and fill the *just defined* path
+									ctx.fillStyle = tokenData.backgroundColor || 'grey';
+									ctx.fill(); // Fills the rectangle defined above
+								}
 
 								// --- APPLY RED TINT (ON TOP of image/color) ---
 								if (tokenData.maxHP > 0 && tokenData.hp !== undefined) {
