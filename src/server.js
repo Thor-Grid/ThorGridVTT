@@ -28,7 +28,8 @@ const io = socketIo(server, {
     serveClient: true, // Serve the socket.io client library
     pingInterval: 10000,
     pingTimeout: 5000,
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    maxHttpBufferSize: 1e8
 });
 
 				// --- Collision Detection Helper ---

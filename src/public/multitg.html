@@ -414,7 +414,7 @@
                 <button id="save-state-button" class="dm-controls">Save State</button>
                 <button id="download-state-button" class="dm-controls">Download State</button>
                 <button id="import-state-button" class="dm-controls">Import State</button>
-                <input type="file" id="import-state-file" class="dm-controls" accept=".json" style="display: none;">
+                <input type="file" id="import-state-file" class="dm-controls" accept=".json,.zip" style="display: none;">
             </div>
 
             <details class="dm-controls">
@@ -568,7 +568,7 @@
 
      <!-- Socket.IO Client Library - Load Relative -->
     <script src="/socket.io/socket.io.js"></script>
-
+	<script src="/js/jszip.min.js"></script>
     <script>
 		// Ensure the entire script runs after the DOM is ready
 		document.addEventListener('DOMContentLoaded', () => {
@@ -2790,50 +2790,118 @@
 					// Notification handled by server 'saveSuccess' event
 				});
 
-				downloadStateButton.addEventListener('click', () => {
-                     if (currentRole !== 'dm') {
-                         showNotification("Only the DM can download the state.", false);
-                         return;
-                    }
+				downloadStateButton.addEventListener('click', async () => { // Make it async
+    				if (currentRole !== 'dm') {
+						showNotification("Only the DM can download the state.", false);
+						return;
+					}
+
+					// --- NEW EXPORT LOGIC ---
+					const zip = new JSZip();
+					const imagesFolder = zip.folder("images"); // Create an "images" folder in the zip
+					let imageCounter = 0;
+					const processedTokens = [];
+
+					// 1. Process Tokens: Extract images, replace with paths
+					for (const token of tokensData) {
+						let tokenImagePath = null;
+						if (token.imageUrl && token.imageUrl.startsWith('data:image')) {
+							// It's a Base64 image
+							try {
+								const MimeType = token.imageUrl.substring(token.imageUrl.indexOf(':')+1,token.imageUrl.indexOf(';')); // image/png or image/jpeg
+								const fileExtension = MimeType.split('/')[1] || 'png'; // Default to png
+								const imageName = `token_${token.id || imageCounter++}.${fileExtension}`;
+
+								// Get Base64 data part
+								const base64Data = token.imageUrl.split(',')[1];
+								await imagesFolder.file(imageName, base64Data, { base64: true });
+								tokenImagePath = `images/${imageName}`; // Path within the zip
+								console.log(`Added ${imageName} to zip from token ${token.name}`);
+							} catch (error) {
+								console.error(`Error processing image for token ${token.name}:`, error);
+								showNotification(`Error saving image for token ${token.name}. It might be skipped.`, true);
+								// Keep original imageUrl if saving fails, or set to null
+								tokenImagePath = token.imageUrl; // Or null if you prefer to mark it as failed
+							}
+						} else if (token.imageUrl) {
+							// It's a URL, keep it as is for now.
+							// Future enhancement: download and embed these too, or warn user.
+							tokenImagePath = token.imageUrl;
+						}
+
+						processedTokens.push({
+							id: token.id,
+							name: token.name,
+							x: token.x,
+							y: token.y,
+							// Store the path OR the original URL if it wasn't Base64
+							imageUrl: tokenImagePath,
+							// imageFilename: token.imageFilename, // Redundant if we name by ID/counter
+							backgroundColor: token.backgroundColor,
+							size: token.size,
+							rotation: token.rotation,
+							maxHP: token.maxHP,
+							hp: token.hp,
+							initiative: token.initiative,
+							ac: token.ac,
+							sightRadius: token.sightRadius,
+							isLightSource: token.isLightSource,
+							brightRange: token.brightRange,
+							dimRange: token.dimRange,
+							isMinion: token.isMinion,
+							owner: token.owner,
+							parentOwner: token.parentOwner
+							// imageObj is a runtime object, don't save
+						});
+					}
+
+					// 2. Process Background Image
+					let processedBackgroundImageUrl = backgroundImageUrl;
+					if (backgroundImageUrl && backgroundImageUrl.startsWith('data:image')) {
+						try {
+							const MimeType = backgroundImageUrl.substring(backgroundImageUrl.indexOf(':')+1,backgroundImageUrl.indexOf(';'));
+							const fileExtension = MimeType.split('/')[1] || 'png';
+							const bgImageName = `background.${fileExtension}`;
+							const base64Data = backgroundImageUrl.split(',')[1];
+							await imagesFolder.file(bgImageName, base64Data, { base64: true });
+							processedBackgroundImageUrl = `images/${bgImageName}`; // Path within the zip
+							console.log(`Added ${bgImageName} to zip.`);
+						} catch (error) {
+							console.error('Error processing background image:', error);
+							showNotification('Error saving background image. It might be skipped.', true);
+							// Keep original if saving fails
+						}
+					}
+
+					// 3. Create the main state JSON
 					const state = {
-						tokens: tokensData.map(token => ({ // Strip imageObj for download
-                            id: token.id,
-                            name: token.name,
-                            x: token.x,
-                            y: token.y,
-                            imageUrl: token.imageUrl,
-                            imageFilename: token.imageFilename,
-                            backgroundColor: token.backgroundColor,
-                            size: token.size,
-                            rotation: token.rotation,
-                            maxHP: token.maxHP,
-                            hp: token.hp,
-                            initiative: token.initiative,
-                            ac: token.ac,
-                            sightRadius: token.sightRadius, // Include sight radius
-                            isLightSource: token.isLightSource, // Include light source properties
-                            brightRange: token.brightRange,
-                            dimRange: token.dimRange,
-                            isMinion: token.isMinion,
-                            owner: token.owner,
-                            parentOwner: token.parentOwner
-                        })),
+						tokens: processedTokens, // Use the processed tokens
 						walls: normalizeWalls(walls, currentGridWidthCells, currentGridHeightCells),
-						isGridVisible: isGridVisible, // Include grid visibility
-                        isMapFullyVisible: isMapFullyVisible, // NEW: Include map visibility toggle state
-						backgroundImageUrl,
+						isGridVisible: isGridVisible,
+						isMapFullyVisible: isMapFullyVisible,
+						backgroundImageUrl: processedBackgroundImageUrl, // Use the processed URL/path
 						gridSize: { width: currentGridWidthCells, height: currentGridHeightCells },
-                        // Optionally save current view state (pan/scale) - Note: This isn't currently loaded by server/client
-                        // viewState: { scale, panX, panY } // Let's remove this from the download state for now to keep it simple
+						version: "1.0-zip" // Add a version for your new format
 					};
-					const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-					const url = URL.createObjectURL(blob);
-					const a = document.createElement('a');
-					a.href = url;
-					a.download = 'thorgrid-state.json'; // Use app name
-					a.click();
-					URL.revokeObjectURL(url);
-					showNotification('State downloaded.');
+
+					zip.file("session_data.json", JSON.stringify(state, null, 2));
+
+					// 4. Generate and Download ZIP
+					try {
+						const content = await zip.generateAsync({ type: "blob" });
+						const url = URL.createObjectURL(content);
+						const a = document.createElement('a');
+						a.href = url;
+						a.download = 'thorgrid-session.zip'; // New extension
+						document.body.appendChild(a); // Required for Firefox
+						a.click();
+						a.remove();
+						URL.revokeObjectURL(url);
+						showNotification('Session exported as ZIP.');
+					} catch (error) {
+						console.error("Error generating ZIP:", error);
+						showNotification("Failed to generate ZIP export.", true);
+					}
 				});
 
 				importStateButton.addEventListener('click', () => {
@@ -2844,32 +2912,140 @@
 					importStateFile.click();
 				});
 
-				importStateFile.addEventListener('change', () => {
+				importStateFile.addEventListener('change', async () => { // Make it async
 					const file = importStateFile.files[0];
 					if (file) {
-						const reader = new FileReader();
-						reader.onload = (e) => {
+						isLoading = true; // Set loading flag
+
+						if (file.name.endsWith(".zip")) {
+							// --- NEW ZIP IMPORT LOGIC ---
 							try {
-								const state = JSON.parse(e.target.result);
-                                // Basic validation before emitting to server
-                                if (state && Array.isArray(state.tokens) && Array.isArray(state.walls) && state.gridSize) {
-                                    socket.emit('importState', state); // Server handles processing and broadcasting fullStateUpdate
-                                    showNotification('Importing state...');
-                                    // Notification handled by server 'saveSuccess' event after successful import
-                                } else {
-                                     showNotification('Invalid state file format.', true);
-                                }
+								const zip = await JSZip.loadAsync(file);
+								const sessionFile = zip.file("session_data.json");
+
+								if (!sessionFile) {
+									showNotification('Invalid ZIP: session_data.json not found.', true);
+									isLoading = false;
+									importStateFile.value = ''; // Clear file input
+									return;
+								}
+
+								const jsonString = await sessionFile.async("string");
+								const state = JSON.parse(jsonString);
+
+								// Basic validation of the JSON structure
+								if (!state || !Array.isArray(state.tokens) || !state.gridSize) {
+									showNotification('Invalid session_data.json format inside ZIP.', true);
+									isLoading = false;
+									importStateFile.value = '';
+									return;
+								}
+
+								// 1. Pre-load images from the ZIP
+								const loadedImageObjects = {}; // Store promises for loaded image dataUrls
+
+								for (const token of state.tokens) {
+									if (token.imageUrl && token.imageUrl.startsWith('images/')) {
+										const imageFileInZip = zip.file(token.imageUrl);
+										if (imageFileInZip) {
+											try {
+												const base64Data = await imageFileInZip.async("base64");
+												const MimeTypeArray = token.imageUrl.split('.');
+												const fileExtension = MimeTypeArray[MimeTypeArray.length-1].toLowerCase();
+												let MimeType = 'image/png'; // Default
+												if (fileExtension === 'jpg' || fileExtension === 'jpeg') MimeType = 'image/jpeg';
+												else if (fileExtension === 'gif') MimeType = 'image/gif';
+												else if (fileExtension === 'webp') MimeType = 'image/webp';
+												// Add more as needed
+
+												token.imageUrl = `data:${MimeType};base64,${base64Data}`;
+												console.log(`Loaded ${token.imageUrl.substring(0,30)}... from zip for token ${token.name}`);
+											} catch (imgError) {
+												console.error(`Error loading image ${token.imageUrl} from zip for token ${token.name}:`, imgError);
+												token.imageUrl = null; // Or a placeholder
+											}
+										} else {
+											console.warn(`Image ${token.imageUrl} for token ${token.name} not found in zip.`);
+											token.imageUrl = null; // Or a placeholder
+										}
+									}
+									// If token.imageUrl is an external URL, it remains as is.
+								}
+
+								if (state.backgroundImageUrl && state.backgroundImageUrl.startsWith('images/')) {
+									const bgImageFileInZip = zip.file(state.backgroundImageUrl);
+									if (bgImageFileInZip) {
+										try {
+											const base64Data = await bgImageFileInZip.async("base64");
+											const MimeTypeArray = state.backgroundImageUrl.split('.');
+											const fileExtension = MimeTypeArray[MimeTypeArray.length-1].toLowerCase();
+											let MimeType = 'image/png'; // Default
+											if (fileExtension === 'jpg' || fileExtension === 'jpeg') MimeType = 'image/jpeg';
+											// ... more mime types
+											state.backgroundImageUrl = `data:${MimeType};base64,${base64Data}`;
+											console.log(`Loaded background image from zip.`);
+										} catch (bgImgError) {
+											console.error(`Error loading background image ${state.backgroundImageUrl} from zip:`, bgImgError);
+											state.backgroundImageUrl = null;
+										}
+									} else {
+										console.warn(`Background image ${state.backgroundImageUrl} not found in zip.`);
+										state.backgroundImageUrl = null;
+									}
+								}
+
+								// 2. Emit the processed state to the server (or handle directly if fully client-side)
+								// The server 'importState' should now expect image Data URLs
+								socket.emit('importState', state);
+								showNotification('Importing session from ZIP...');
+								// Server will broadcast 'fullStateUpdate' which handles the rest
+
 							} catch (err) {
-								console.error('Failed to parse imported state:', err);
-								showNotification('Failed to import state. Invalid JSON.', true);
+								console.error('Failed to process ZIP file:', err);
+								showNotification('Failed to import session from ZIP. Invalid or corrupted file.', true);
+								isLoading = false;
+							} finally {
+								importStateFile.value = ''; // Clear file input
+								// isLoading will be set to false by the fullStateUpdate handler
 							}
-						};
-						reader.onerror = () => {
-							console.error('Failed to read file:', file.name);
-							showNotification('Failed to read file.', true);
-						};
-						reader.readAsText(file);
-						importStateFile.value = ''; // Clear file input
+
+						} else if (file.name.endsWith(".json")) {
+							// --- ORIGINAL JSON IMPORT LOGIC (for backward compatibility) ---
+							const reader = new FileReader();
+							reader.onload = (e) => {
+								try {
+									const state = JSON.parse(e.target.result);
+									if (state && Array.isArray(state.tokens) && state.gridSize) { // Basic check
+										// Potentially add a version check here if you want to differentiate old JSONs
+										socket.emit('importState', state);
+										showNotification('Importing state from JSON...');
+									} else {
+										showNotification('Invalid state file format (JSON).', true);
+										isLoading = false;
+									}
+								} catch (err) {
+									console.error('Failed to parse imported JSON state:', err);
+									showNotification('Failed to import state. Invalid JSON.', true);
+									isLoading = false;
+								} finally {
+									importStateFile.value = '';
+									// isLoading reset by fullStateUpdate or error
+								}
+							};
+							reader.onerror = () => {
+								console.error('Failed to read JSON file:', file.name);
+								showNotification('Failed to read JSON file.', true);
+								isLoading = false;
+								importStateFile.value = '';
+							};
+							reader.readAsText(file);
+						} else {
+							showNotification('Unsupported file type. Please select a .zip or .json file.', true);
+							isLoading = false;
+							importStateFile.value = '';
+						}
+					} else {
+						isLoading = false; // No file selected
 					}
 				});
 

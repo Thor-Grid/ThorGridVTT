@@ -1,6 +1,6 @@
 {
   "name": "thor-grid",
-  "version": "2.2.7",
+  "version": "2.2.8",
   "description": "Thor-Grid Virtual Tabletop",
   "main": "main.js",
   "scripts": {
@@ -23,6 +23,7 @@
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "express": "^4.21.1",
+    "jszip": "^3.10.1",
     "lodash": "^4.17.21",
     "socket.io": "^4.8.0"
   }
