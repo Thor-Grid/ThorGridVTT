@@ -1,4 +1,13 @@
 ThorGridVTT has evolved significantly since its initial release. What started as a lightweight map-and-token tool has grown into a feature-rich virtual tabletop with a powerful dice roller, dynamic fog of war, and cross-platform support.
+
+---
+
+### **Downloads**
+*   **[Download the User Guide (PDF)](https://github.com/Thor-Grid/ThorGridVTT/blob/main/Thor-Grid%20VTT%20User%20Guide.pdf)**
+*   **[Go to the Latest Release](https://github.com/Thor-Grid/ThorGridVTT/releases/latest)**
+
+---
+
 v3.x - The Dice Roller & DM Tools
 
 This major version introduced a complete dice rolling system, transforming ThorGridVTT into a more comprehensive VTT solution.
