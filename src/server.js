@@ -706,31 +706,60 @@ io.on('connection', (socket) => {
 	
 	// +++++++++++++ NEW DICE ROLLING HANDLER +++++++++++++
     socket.on('rollDice', (data) => {
-        const username = getUsernameFromSocket(socket); // Use your helper
-        const diceString = data.diceString ? data.diceString.trim() : '';
+		const username = getUsernameFromSocket(socket);
+		const userRole = roleFromSocket(socket); // Get the user's role
+		const diceString = data.diceString ? data.diceString.trim() : '';
+		const isRollIntendedToBeHidden = data.isHidden && userRole === 'dm'; // Check if DM *intends* to hide
 
-        if (!diceString) {
-            socket.emit('error', 'Dice string cannot be empty.');
-            return;
-        }
+		if (!diceString) {
+			socket.emit('error', 'Dice string cannot be empty.');
+			return;
+		}
 
-        console.log(`${username} is rolling: ${diceString}`);
+		console.log(`${username} is rolling: ${diceString}` + (isRollIntendedToBeHidden ? " (intended hidden)" : ""));
+		const timestamp = new Date().toISOString(); // Define timestamp once
 
-        try {
-            const roll = new DiceRoll(diceString);
-            const resultMessage = {
-                roller: username,
-                input: diceString,
-                output: roll.output, // e.g., "2d6 (4, 2) = 6"
-                total: roll.total,
-                timestamp: new Date().toISOString()
-            };
-            io.emit('diceResult', resultMessage); // Broadcast to all clients in the current namespace/room
-        } catch (error) {
-            console.error(`Error rolling dice "${diceString}" for ${username}:`, error.message);
-            socket.emit('error', `Invalid dice notation: ${error.message}`);
-        }
-    });
+		try { // <--- TRY BLOCK STARTS HERE
+			const roll = new DiceRoll(diceString);
+
+			// This is the complete result, always calculated
+			const completeRollData = {
+				roller: username,
+				input: diceString,
+				output: roll.output,
+				total: roll.total,
+				timestamp: timestamp
+			};
+
+			if (isRollIntendedToBeHidden) {
+				// Send full result only to the DM who rolled
+				// Add a flag so the DM's client knows this was *their* hidden roll
+				socket.emit('diceResult', { ...completeRollData, isHiddenByDM: true, forPlayerView: false });
+
+				// Send a generic message to other clients
+				const hiddenMessageToPlayers = {
+					roller: username,
+					input: diceString, // Optional: show players what kind of dice
+					output: "DM rolled privately: ???",
+					total: "???",
+					isHiddenByDM: true, // This flags it as a hidden roll outcome for players
+					forPlayerView: true, // This helps client differentiate
+					timestamp: timestamp
+				};
+				// Send to everyone EXCEPT the sender (DM)
+				socket.broadcast.emit('diceResult', hiddenMessageToPlayers);
+			
+			} else {
+				// Public roll, send full result to everyone
+				// (including the roller, who might be a player or a DM rolling publicly)
+				io.emit('diceResult', { ...completeRollData, isHiddenByDM: false, forPlayerView: false });
+			}
+
+		} catch (error) { // <--- CATCH BLOCK MATCHES THE TRY
+			console.error(`Error rolling dice "${diceString}" for ${username}:`, error.message);
+			socket.emit('error', `Invalid dice notation: ${error.message}`);
+		}
+	});
 
 
     socket.on('disconnect', (reason) => {

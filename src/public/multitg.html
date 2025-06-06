@@ -294,11 +294,17 @@
         }
 
         .dm-only {
-            display: none;
+            display: none; /* Default: Hide dm-only elements */
         }
 
         body.role-dm .dm-only {
-            display: block;
+            display: flex; /* For DMs, show .dm-only elements as flex */
+                           /* The align-items, gap, margin-bottom are still coming from its inline style, which is fine */
+        }
+
+        /* EXPLICITLY HIDE .dm-only for players - this rule is very specific */
+        body.role-player .dm-only {
+            display: none !important; /* Force hide for players. The !important gives it high priority. */
         }
 
         .dm-controls {
@@ -553,7 +559,16 @@
                 <div id="dice-roll-controls" style="padding: 8px; display: flex; flex-direction: column; gap: 6px;">
                     <label for="dice-input" style="font-size: 0.9em;">Enter Dice (e.g., 2d6+3, d20kh1):</label>
                     <input type="text" id="dice-input" name="dice-input" placeholder="e.g., 3d8kh2+5" style="padding: 6px; font-size: 14px;">
+
+                    <!-- This div below is ONLY for DMs. -->
+                    <div class="dm-only" style="display: flex; align-items: center; gap: 5px; margin-bottom: 5px;">
+                        <input type="checkbox" id="hidden-roll-toggle" name="hidden-roll-toggle">
+                        <label for="hidden-roll-toggle" style="font-size: 0.9em;">Roll Hidden</label>
+                    </div>
+                    
                     <button id="roll-dice-button" style="padding: 8px; font-size: 14px;">Roll Dice</button>
+                    
+                    <!-- Dice Log HTML - Make sure this is NOT commented out -->
                     <div id="dice-log-container" style="margin-top: 10px;">
                         <strong style="font-size: 0.9em;">Dice Log:</strong>
                         <div id="dice-log" style="height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 5px; background-color: rgba(255,255,255,0.1); font-size: 0.9em; margin-top: 5px; list-style-type: none;">
@@ -1764,17 +1779,24 @@
 				const diceInputElement = document.getElementById('dice-input');
 				const rollDiceButtonElement = document.getElementById('roll-dice-button');
 				const diceLogElement = document.getElementById('dice-log');
+				const hiddenRollToggleElement = document.getElementById('hidden-roll-toggle'); // Get the toggle
 
-				if (rollDiceButtonElement && diceInputElement && socket) { // Added socket check here
+				if (rollDiceButtonElement && diceInputElement && socket) {
 					rollDiceButtonElement.addEventListener('click', () => {
 						if (!socket || !socket.connected) {
 							showNotification('Not connected to server. Cannot roll dice.', true);
 							return;
 						}
 						const diceString = diceInputElement.value.trim();
+						// Check if hiddenRollToggleElement exists AND is checked, only if currentRole is 'dm'
+						const isHiddenRoll = currentRole === 'dm' && hiddenRollToggleElement && hiddenRollToggleElement.checked;
+
 						if (diceString) {
-							socket.emit('rollDice', { diceString: diceString });
-							// diceInputElement.value = ''; // Optional: Clear input after sending
+							socket.emit('rollDice', {
+								diceString: diceString,
+								isHidden: isHiddenRoll // Send the hidden state
+							});
+							// diceInputElement.value = ''; 
 						} else {
 							showNotification('Please enter dice notation to roll.', false);
 						}
@@ -1788,27 +1810,44 @@
 					});
 				}
 
-				// This listener should be set up once the socket object is available
-				// If 'socket' is initialized later in your script, move this inside the callback
-				// where 'socket' becomes valid. For now, assuming 'socket' is globally available
-				// within this DOMContentLoaded scope after initialization.
 				if (socket) {
 					socket.on('diceResult', (data) => {
 						if (diceLogElement) {
 							const rollEntry = document.createElement('p');
 							const time = new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-							// Using innerHTML to allow for bolding and line breaks
-							rollEntry.innerHTML = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>)`;
+							let messageHtml = "";
+
+							// data.isHiddenByDM: true if DM intended to hide.
+							// data.forPlayerView: true if this is the "private" message for players.
+							//                       false if it's the full result (either public, or DM's own hidden roll).
+
+							if (data.isHiddenByDM && data.forPlayerView && currentRole !== 'dm') {
+								// Scenario: Player receives a "DM rolled privately" message.
+								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input || 'dice'}</em>:<br>  ${data.output}`;
+							} else if (data.isHiddenByDM && !data.forPlayerView && currentRole === 'dm' && data.roller === username) {
+								// Scenario: DM receives their OWN hidden roll (full details).
+								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>) <em style="color: #aaa;">(Hidden from players)</em>`;
+							} else if (!data.isHiddenByDM) {
+								// Scenario: Public roll (DM or Player), or a player rolling for themselves. Everyone sees full details.
+								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>)`;
+							} else {
+								// Fallback or unexpected scenario - might indicate a logic issue if this branch is hit often.
+								// For now, just display basic info. This case should ideally not be common if server logic is correct.
+								// This could happen if a player somehow gets a message intended only for the DM (e.g., if broadcast logic was wrong)
+								// or if a DM gets a "forPlayerView" message (which shouldn't happen with socket.broadcast).
+								console.warn("Dice log: Unhandled display case for diceResult data:", data);
+								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled.`;
+							}
 							
-							// Prepend to show newest rolls at the top, or append for bottom
+							rollEntry.innerHTML = messageHtml;
+							
 							if (diceLogElement.firstChild) {
 								diceLogElement.insertBefore(rollEntry, diceLogElement.firstChild);
 							} else {
 								diceLogElement.appendChild(rollEntry);
 							}
 
-							// Optional: Limit log length to prevent excessive DOM elements
-							const maxLogEntries = 50; // Keep the latest 50 rolls
+							const maxLogEntries = 50;
 							while (diceLogElement.children.length > maxLogEntries) {
 								diceLogElement.removeChild(diceLogElement.lastChild);
 							}
