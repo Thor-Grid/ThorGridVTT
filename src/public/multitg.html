@@ -612,7 +612,7 @@
         <canvas id="grid"></canvas>
     </div>
 	
-
+	<audio id="roll-sound" src="/sounds/dice-roll.mp3" preload="auto"></audio>
      <!-- Socket.IO Client Library - Load Relative -->
     <script src="/socket.io/socket.io.js"></script>
 	<script src="/js/jszip.min.js"></script>
@@ -1776,6 +1776,7 @@
 					return false; // No occupied cell is knowable
 				}
 				
+				const rollSoundElement = document.getElementById('roll-sound');
 				const diceInputElement = document.getElementById('dice-input');
 				const rollDiceButtonElement = document.getElementById('roll-dice-button');
 				const diceLogElement = document.getElementById('dice-log');
@@ -1809,9 +1810,32 @@
 						}
 					});
 				}
+				
+				function playDiceSound() {
+					if (rollSoundElement) {
+						// Check if the audio element is ready to play (optional but good practice)
+						if (rollSoundElement.readyState >= 2) { // HAVE_CURRENT_DATA or more
+							rollSoundElement.currentTime = 1.5;  // Skips the first 1.5 seconds
+							rollSoundElement.play().catch(error => {
+								// Autoplay was prevented, or another error.
+								// This can happen if the user hasn't interacted with the page yet.
+								// Modern browsers often block audio until user interaction.
+								console.warn("Dice sound playback failed:", error);
+								// You might want to enable sound on first click elsewhere if this is an issue.
+							});
+						} else {
+							console.warn("Dice sound not ready to play.");
+							// Optionally, add an event listener for 'canplaythrough' to try again
+							// rollSoundElement.addEventListener('canplaythrough', () => playDiceSound(), { once: true });
+						}
+					}
+				}
 
 				if (socket) {
 					socket.on('diceResult', (data) => {
+						// Play the sound for ANY dice result received
+						playDiceSound(); // <--- ADD THIS LINE
+						
 						if (diceLogElement) {
 							const rollEntry = document.createElement('p');
 							const time = new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
