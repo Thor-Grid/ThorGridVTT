@@ -1,6 +1,6 @@
 {
   "name": "thor-grid",
-  "version": "2.2.8",
+  "version": "3.0.0",
   "description": "Thor-Grid Virtual Tabletop",
   "main": "main.js",
   "scripts": {
@@ -21,6 +21,7 @@
     "electron": "^32.1.2"
   },
   "dependencies": {
+    "@dice-roller/rpg-dice-roller": "^5.5.1",
     "electron-squirrel-startup": "^1.0.1",
     "express": "^4.21.1",
     "jszip": "^3.10.1",

@@ -6,6 +6,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { debounce } = require('lodash');
 const config = require('./config');
+const { DiceRoll } = require('@dice-roller/rpg-dice-roller');
 
 const app = express();
 const server = http.createServer(app);
@@ -270,7 +271,7 @@ setInterval(async () => {
 
 // --- Helper Functions for Socket Handlers ---
 function getUsernameFromSocket(socket) {
-    return connectedPlayers.get(socket.id) || null;
+    return connectedPlayers.get(socket.id) || 'Unknown User';
 }
 
 function roleFromSocket(socket) {
@@ -700,6 +701,34 @@ io.on('connection', (socket) => {
         } else {
              // Optional: Log unauthorized stat update attempts
              // console.warn(`Client ${socket.id} attempted unauthorized stat update of token ${tokenId}.`);
+        }
+    });
+	
+	// +++++++++++++ NEW DICE ROLLING HANDLER +++++++++++++
+    socket.on('rollDice', (data) => {
+        const username = getUsernameFromSocket(socket); // Use your helper
+        const diceString = data.diceString ? data.diceString.trim() : '';
+
+        if (!diceString) {
+            socket.emit('error', 'Dice string cannot be empty.');
+            return;
+        }
+
+        console.log(`${username} is rolling: ${diceString}`);
+
+        try {
+            const roll = new DiceRoll(diceString);
+            const resultMessage = {
+                roller: username,
+                input: diceString,
+                output: roll.output, // e.g., "2d6 (4, 2) = 6"
+                total: roll.total,
+                timestamp: new Date().toISOString()
+            };
+            io.emit('diceResult', resultMessage); // Broadcast to all clients in the current namespace/room
+        } catch (error) {
+            console.error(`Error rolling dice "${diceString}" for ${username}:`, error.message);
+            socket.emit('error', `Invalid dice notation: ${error.message}`);
         }
     });
 
