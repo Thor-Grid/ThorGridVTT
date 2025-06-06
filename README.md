@@ -12,7 +12,12 @@ v3.x - The Dice Roller & DM Tools
 
 This major version introduced a complete dice rolling system, transforming ThorGridVTT into a more comprehensive VTT solution.
 
-    v3.1.0 (Latest): DM Hidden Rolls
+     v3.1.1 (Latest): Sound When Hitting Roll Button
+
+        A short audible sound plays for rolling the dice, when you hit the button everyone with sound on will hear it as an audible marker as well as the visual log update.
+
+    
+    v3.1.0: DM Hidden Rolls
 
         The Game Master can now make "hidden" dice rolls. A toggle in the dice roller hides the results from players while keeping them visible to the DM, perfect for secret checks and suspense.
 
