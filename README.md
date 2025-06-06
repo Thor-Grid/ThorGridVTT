@@ -3,7 +3,7 @@ ThorGridVTT has evolved significantly since its initial release. What started as
 ---
 
 ### **Downloads**
-*   **[Download the User Guide (PDF)](https://github.com/Thor-Grid/ThorGridVTT/blob/main/Thor-Grid%20VTT%20User%20Guide.pdf)**
+*   **[Download the User Guide (PDF)](https://github.com/Thor-Grid/ThorGridVTT/blob/main/Thor-Grid%20User%20Guide.pdf)**
 *   **[Go to the Latest Release](https://github.com/Thor-Grid/ThorGridVTT/releases/latest)**
 
 ---
