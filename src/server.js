@@ -760,6 +760,32 @@ io.on('connection', (socket) => {
 			socket.emit('error', `Invalid dice notation: ${error.message}`);
 		}
 	});
+	
+	socket.on('clearBoard', () => {
+        if (roleFromSocket(socket) === 'dm') {
+            console.log(`Board clear requested by DM: ${getUsernameFromSocket(socket)}`);
+
+            gameState.tokens = [];
+            io.emit('updateTokens', gameState.tokens);
+
+            gameState.walls = normalizeWalls([], gameState.gridSize.width, gameState.gridSize.height);
+            io.emit('updateWalls', gameState.walls);
+
+            gameState.backgroundImageUrl = '';
+            io.emit('updateBackground', gameState.backgroundImageUrl);
+
+            gameState.isGridVisible = true;
+            io.emit('updateGridVisibility', gameState.isGridVisible);
+            
+            gameState.isMapFullyVisible = false;
+            io.emit('mapVisibilityToggled', gameState.isMapFullyVisible);
+
+            saveStateDebounced(); 
+            socket.emit('saveSuccess', 'Board cleared successfully.');
+        } else {
+            socket.emit('error', 'Only the DM can clear the board.');
+        }
+    });
 
 
     socket.on('disconnect', (reason) => {

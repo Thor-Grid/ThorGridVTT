@@ -153,6 +153,34 @@
         details {
             margin-bottom: 8px;
         }
+		
+		.destructive-action-button {
+			background-color: #d9534f !important; 
+			color: white !important;
+			border: 2px solid #ac2925 !important; 
+			font-weight: bold !important;
+			padding: 8px 6px !important; /* Try 6px, or 5px for left/right */
+			box-sizing: border-box; /* Important for width: 100% */
+			width: 100%; /* Explicitly set width if not inherited */
+			/* Ensure no fixed height from general button styles is preventing text from fitting, or override it here */
+			height: 36px; /* Or whatever your standard button height is */
+			line-height: normal; /* Ensure line height isn't causing issues */
+			text-align: center; /* Ensure text is centered */
+		}
+
+		.destructive-action-button:hover {
+			background-color: #c9302c !important;
+			border-color: #761c19 !important;
+			box-shadow: 0 0 10px rgba(255,0,0,0.5) !important; /* Optional: red glow on hover */
+		}
+
+		/* Style for the container of dangerous actions */
+		#dangerous-actions {
+			border-top-color: #555; /* Darker in dark mode */
+		}
+		body.dark-mode #dangerous-actions {
+			border-top-color: #444;
+		}
 
         summary {
             cursor: pointer;
@@ -438,6 +466,10 @@
                 <button id="import-state-button" class="dm-controls">Import State</button>
                 <input type="file" id="import-state-file" class="dm-controls" accept=".json,.zip" style="display: none;">
             </div>
+			
+			<div id="dangerous-actions" class="dm-controls" style="margin-top: 15px; padding-top: 10px; border-top: 1px dashed #ccc;">
+				<button id="clear-board-button" class="dm-controls destructive-action-button">⚠️ CLEAR BOARD ⚠️</button>
+			</div>
 
             <details class="dm-controls">
                 <summary>Tokens</summary>
@@ -1019,6 +1051,7 @@
 				const importStateFile = document.getElementById('import-state-file');
 				const notificationDiv = document.getElementById('notification');
                 const serverAddressDisplay = document.getElementById('server-address-display');
+				const clearBoardButtonElement = document.getElementById('clear-board-button');
 
 
 				const gridSizeOptions = {
@@ -3609,6 +3642,31 @@
 				});
 
 				window.addEventListener('resize', resizeCanvas);
+				
+				if (clearBoardButtonElement && socket) { // Make sure to check for socket
+					clearBoardButtonElement.addEventListener('click', () => {
+						if (currentRole === 'dm') {
+							const warningMessage = "DANGER ZONE!\n\n" +
+												 "You are about to CLEAR EVERYTHING on the current map:\n" +
+												 "- All Tokens\n" +
+												 "- All Walls\n" +
+												 "- The Background Image\n\n" +
+												 "This action CANNOT BE UNDONE from the application.\n" +
+												 "Are you absolutely, 100% sure you want to proceed?";
+							if (confirm(warningMessage)) {
+								socket.emit('clearBoard');
+								
+								// Optional: Client-side view reset
+								// scale = 1;
+								// panX = (canvas.width - currentGridWidthCells * gridSize * scale) / 2;
+								// panY = (canvas.height - currentGridHeightCells * gridSize * scale) / 2;
+								// drawGrid(); 
+							}
+						} else {
+							showNotification("This action is DM-only.", true);
+						}
+					});
+				}
 
 				// Login handler
 				document.getElementById('loginButton').addEventListener('click', () => {
