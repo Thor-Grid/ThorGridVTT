@@ -29,7 +29,7 @@
         .token-name {
             position: fixed;
             pointer-events: none;
-            background-color: rgba(0, 0, 0, 0.7);
+            background-color: rgba(0, 0, 0, 0.5);
             color: white;
             padding: 3px 8px;
             padding-bottom: 3px; /* <--- Add this line (adjust value as needed) */
@@ -40,11 +40,14 @@
             z-index: 10;
             transform: translate(-50%, -100%);
             transition: opacity 0.2s ease;
+			text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
         }
 
         .dark-mode .token-name {
             background-color: rgba(255, 255, 255, 0.7);
             color: black;
+			border: 1px solid rgba(0, 0, 0, 0.6);
+			text-shadow: -1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
         }
 
         .token-name.hovered {
@@ -1147,19 +1150,34 @@
 				function preloadTokenImage(tokenData) {
 					if (tokenData.imageUrl) {
 						const img = new Image();
-						img.src = tokenData.imageUrl;
+						
+						// --- NEW CRITICAL FIX ---
+						// Check if the imageUrl is an absolute file path.
+						// If so, convert it to a relative web path.
+						let finalUrl = tokenData.imageUrl;
+						if (finalUrl.startsWith('file:///') || finalUrl.match(/^[a-zA-Z]:\\/)) {
+							// It's a local file path. Extract just the 'images/...' part.
+							const imagesIndex = finalUrl.lastIndexOf('images/');
+							if (imagesIndex !== -1) {
+								finalUrl = finalUrl.substring(imagesIndex);
+							}
+						}
+						// Ensure forward slashes for the URL
+						finalUrl = finalUrl.replace(/\\/g, '/');
+						img.src = finalUrl;
+						// --- END FIX ---
+						
 						img.onload = () => {
 							tokenData.imageObj = img;
-							// Trigger mask recalculation if this token belongs to the player or is a light source
 							if (currentRole === 'player' && (tokenData.owner === username || tokenData.isLightSource)) {
 								maskDirty = true;
 							}
-							drawGrid(); // Redraw once image is loaded
+							drawGrid();
 						};
 						img.onerror = () => {
-							console.warn(`Failed to load token image: ${tokenData.imageUrl}`);
+							console.warn(`Failed to load token image: ${img.src}`);
 							tokenData.imageObj = null;
-							drawGrid(); // Redraw even on error
+							drawGrid();
 						};
 					} else {
 						tokenData.imageObj = null;
@@ -1207,193 +1225,166 @@
 
 				// --- Basic Line of Sight Algorithm ---
                 function isLOSClear(x0, y0, x1, y1, walls, gridWidth, gridHeight) {
-                    // Check boundaries
-                    if (x0 < 0 || x0 >= gridWidth || y0 < 0 || y0 >= gridHeight ||
-                        x1 < 0 || x1 >= gridWidth || y1 < 0 || y1 >= gridHeight) {
-                        return false; // Should not happen if iterating within grid, but safety check
-                    }
-                    // Starting point is never blocked
-                    if (x0 === x1 && y0 === y1) return true;
+					// Check boundaries first
+					if (x0 < 0 || x0 >= gridWidth || y0 < 0 || y0 >= gridHeight ||
+						x1 < 0 || x1 >= gridWidth || y1 < 0 || y1 >= gridHeight) {
+						return false;
+					}
+					// A point always has line of sight to itself.
+					if (x0 === x1 && y0 === y1) return true;
 
-                    // Implement a simple stepping algorithm (like Bresenham's on grid cells)
-                    const dx = Math.abs(x1 - x0);
-                    const dy = Math.abs(y1 - y0);
-                    const sx = (x0 < x1) ? 1 : -1;
-                    const sy = (y0 < y1) ? 1 : -1;
-                    let err = dx - dy;
+					// Bresenham's line algorithm setup
+					const dx = Math.abs(x1 - x0);
+					const dy = Math.abs(y1 - y0);
+					const sx = (x0 < x1) ? 1 : -1;
+					const sy = (y0 < y1) ? 1 : -1;
+					let err = dx - dy;
 
-                    let x = x0;
-                    let y = y0;
+					let x = x0;
+					let y = y0;
 
-                    while (!(x === x1 && y === y1)) {
-                        // Calculate next step
-                        const e2 = 2 * err;
-                        if (e2 > -dy) {
-                            err -= dy;
-                            x += sx;
-                        }
-                        if (e2 < dx) {
-                            err += dx;
-                            y += sy;
-                        }
+					// Loop along the line from start to end
+					while (true) {
+						// If the cell we are about to check is the destination, then we've successfully
+						// reached it without hitting an intermediate wall. The path is clear.
+						if (x === x1 && y === y1) {
+							return true;
+						}
+						
+						// This is an intermediate cell on the path. Check if it's a wall.
+						if (walls[y] && walls[y][x] === 1) {
+							 // But we must exclude the very first cell (the origin) from being a blocker
+							if (x !== x0 || y !== y0) {
+								return false; // Blocked by an intermediate wall
+							}
+						}
 
-                         // Check the cell we just stepped INTO (excluding the origin cell)
-                         if (x >= 0 && x < gridWidth && y >= 0 && y < gridHeight) {
-                            // If the cell contains a wall, the line of sight is blocked
-                            if (walls[y] && walls[y][x] === 1) {
-                                return false; // Blocked by a wall
-                            }
-                         }
-                         // The loop continues only if the cell wasn't blocked, stepping towards the target
-                    }
-
-                    return true; // Reached the target cell without hitting a wall
-                }
+						// Calculate the next step on the line (do this *after* checking the current cell)
+						const e2 = 2 * err;
+						if (e2 > -dy) {
+							err -= dy;
+							x += sx;
+						}
+						if (e2 < dx) {
+							err += dx;
+							y += sy;
+						}
+					}
+				}
 
                 // --- Calculate Visible Cells (Modified for Layered Light/Vision and Owned Cells) ---
 				function calculateVisibleCells() {
-					// Only calculate complex visibility for players AND when "All Visible" is OFF
+					// For DM or when "Show Map" is on, no fog is needed. Clear all visibility sets.
 					if (currentRole === 'dm' || isMapFullyVisible) {
-						// DM sees everything, or All Visible is on - no masks needed
 						brightLightCells.clear();
 						dimLightCells.clear();
 						playerVisionCells.clear();
-						playerOwnedCells.clear(); // Also clear player owned cells set
-						// Setting maskDirty = true here ensures buildVisibilityMask clears the mask if needed
+						playerOwnedCells.clear();
 						maskDirty = true;
 						return;
 					}
 
-					// Clear previous visibility sets
+					// --- Step 1: Clear previous visibility data ---
 					brightLightCells.clear();
 					dimLightCells.clear();
-					playerVisionCells.clear();
-					playerOwnedCells.clear(); // Clear player owned cells set
+					playerVisionCells.clear(); // This set will now be correctly used for dim sight
+					playerOwnedCells.clear();
 
-					// Temporary sets to manage overlaps easily before finalizing
-					const potentialBrightCells = new Set();
-					const potentialDimCells = new Set();
-					const potentialPlayerInherentCells = new Set();
-
-					const lightSources = tokensData.filter(token => token.isLightSource);
-					const playerTokens = tokensData.filter(token =>
+					// --- Step 2: Identify the current player's tokens and all light sources on the map ---
+					const myOwnedTokens = tokensData.filter(token =>
 						token.owner === username || (token.isMinion && token.parentOwner === username)
 					);
+					const allLightSources = tokensData.filter(token => token.isLightSource && (token.brightRange > 0 || token.dimRange > 0));
 
 					const gridWidth = currentGridWidthCells;
 					const gridHeight = currentGridHeightCells;
 
-					// --- Populate playerOwnedCells set ---
-					 playerTokens.forEach(token => {
-						 const tokenSize = token.size || 1;
-						 for (let dy = 0; dy < tokenSize; dy++) {
-							 for (let dx = 0; dx < tokenSize; dx++) {
-								 const cellX = token.x + dx;
-								 const cellY = token.y + dy;
-								 if (cellX >= 0 && cellX < gridWidth && cellY >= 0 && cellY < gridHeight) {
-									 playerOwnedCells.add(`${cellX},${cellY}`);
-								 }
-							 }
-						 }
-					 });
-
-
-					// 1. Calculate light source visibility (Bright and Dim ranges)
-					lightSources.forEach(sourceToken => {
-						 const sx = sourceToken.x;
-						 const sy = sourceToken.y;
-						 // Use || 0 for safety, ensure dimRange is at least brightRange
-						 const brightRange = sourceToken.brightRange || 0;
-						 const dimRange = Math.max(brightRange, sourceToken.dimRange || 0); // Dim range must be >= bright range
-
-
-						 if (dimRange <= 0) return; // Light source doesn't illuminate
-
-						 // Check cells within the total dim light radius bounding box (inclusive)
-						 const startCheckX = Math.max(0, sx - dimRange);
-						 const endCheckX = Math.min(gridWidth - 1, sx + dimRange);
-						 const startCheckY = Math.max(0, sy - dimRange);
-						 const endCheckY = Math.min(gridHeight - 1, sy + dimRange);
-
-
-						 for (let y = startCheckY; y <= endCheckY; y++) {
-							 for (let x = startCheckX; x <= endCheckX; x++) {
-								 // Using Chebyshev distance (max of horizontal/vertical distance) for radius
-								 const dist = Math.max(Math.abs(x - sx), Math.abs(y - sy));
-
-								 if (dist > dimRange) {
-									 continue; // Outside total light radius
-								 }
-
-								 // Check Line of Sight from the light source's cell center to the target cell's center
-								 // isLOSClear correctly checks if a wall cell is on the path.
-								 if (isLOSClear(sx, sy, x, y, walls, gridWidth, gridHeight)) {
-									 const cellKey = `${x},${y}`;
-									 if (dist <= brightRange) {
-										 potentialBrightCells.add(cellKey);
-									 } else { // dist > brightRange && dist <= dimRange
-										 potentialDimCells.add(cellKey);
-									 }
-								 }
-							 }
-						 }
+					// --- Step 3: Populate cells occupied by the player's own tokens ---
+					// This ensures the player always sees the square their token is on.
+					myOwnedTokens.forEach(token => {
+						const tokenSize = token.size || 1;
+						for (let dy = 0; dy < tokenSize; dy++) {
+							for (let dx = 0; dx < tokenSize; dx++) {
+								playerOwnedCells.add(`${token.x + dx},${token.y + dy}`);
+							}
+						}
 					});
 
+					// --- Step 4: Calculate visibility from ALL light sources on the map ---
+					// Players can see by the light of their allies' torches.
+					allLightSources.forEach(sourceToken => {
+						const sx = sourceToken.x;
+						const sy = sourceToken.y;
+						const brightRange = sourceToken.brightRange || 0;
+						const dimRange = Math.max(brightRange, sourceToken.dimRange || 0);
 
-					// 2. Calculate player token inherent vision (e.g., darkvision, normal sight without external light)
-					// This vision determines *which* cells a player has vision over, but doesn't dictate
-					// the *visual appearance* unless combined with light sources.
-					 playerTokens.forEach(playerToken => {
-						 const px = playerToken.x;
-						 const py = playerToken.y;
-						 const sightRadius = playerToken.sightRadius || 0; // Inherent sight radius
+						const startX = Math.max(0, sx - dimRange);
+						const endX = Math.min(gridWidth - 1, sx + dimRange);
+						const startY = Math.max(0, sy - dimRange);
+						const endY = Math.min(gridHeight - 1, sy + dimRange);
 
-						 if (sightRadius <= 0) return; // Token cannot see inherently
+						for (let y = startY; y <= endY; y++) {
+							for (let x = startX; x <= endX; x++) {
+								const dist = Math.max(Math.abs(x - sx), Math.abs(y - sy));
+								if (dist > dimRange) continue;
 
-						 // Check cells within the token's inherent sight radius bounding box (inclusive)
-						 const startCheckX = Math.max(0, px - sightRadius);
-						 const endCheckX = Math.min(gridWidth - 1, px + sightRadius);
-						 const startCheckY = Math.max(0, py - sightRadius);
-						 const endCheckY = Math.min(gridHeight - 1, py + sightRadius);
-
-						 // REVISED Player Token Inherent Vision Loop (Simpler) - Corrected loop bounds
-						  for (let y = startCheckY; y <= endCheckY; y++) {
-							   for (let x = startCheckX; x <= endCheckX; x++) {
-									const dist = Math.max(Math.abs(x - px), Math.abs(y - py)); // Chebyshev distance
-
-									if (dist <= sightRadius) { // Within the sight radius bounding box
-										// Check Line of Sight from the player token's cell center to the target cell's center
-										if (isLOSClear(px, py, x, y, walls, gridWidth, gridHeight)) {
-											 potentialPlayerInherentCells.add(`${x},${y}`);
-										}
+								if (isLOSClear(sx, sy, x, y, walls, gridWidth, gridHeight)) {
+									const cellKey = `${x},${y}`;
+									if (dist <= brightRange) {
+										brightLightCells.add(cellKey);
+									} else {
+										dimLightCells.add(cellKey);
 									}
-							   }
-						  }
-					 });
-					// END REVISED Player Token Inherent Vision Loop
-
-
-					// 3. Combine and finalize visibility sets based on light precedence
-					// Bright light areas are fully visible (0% mask)
-					brightLightCells = potentialBrightCells;
-
-					// Dim light includes cells potentially in dim light *not* already in bright light
-					dimLightCells = new Set();
-					 potentialDimCells.forEach(cellKey => {
-						 if (!brightLightCells.has(cellKey)) { // Must NOT be in bright light
-							  dimLightCells.add(cellKey);
-						 }
-					 });
-
-					// Player vision includes cells potentially seen by player sight *not* in bright or dim light
-					playerVisionCells = new Set();
-					potentialPlayerInherentCells.forEach(cellKey => {
-						 if (!brightLightCells.has(cellKey) && !dimLightCells.has(cellKey)) {
-							 playerVisionCells.add(cellKey);
-						 }
+								}
+							}
+						}
 					});
 
-					 maskDirty = true; // Mask needs to be rebuilt based on new visibility sets
+					// --- Step 5: Calculate inherent sight (e.g., Darkvision) for ONLY the player's OWNED tokens ---
+					myOwnedTokens.forEach(playerToken => {
+						// IMPORTANT: If a token is a light source, its vision is defined by light, not innate sight.
+						if (playerToken.isLightSource) return;
+
+						const px = playerToken.x;
+						const py = playerToken.y;
+						// Convert sight from feet (e.g., 60) to cells (e.g., 12), assuming 5ft per cell.
+						const sightRadiusInCells = Math.floor((playerToken.sightRadius || 0) / 5);
+
+						if (sightRadiusInCells <= 0) return;
+
+						const startX = Math.max(0, px - sightRadiusInCells);
+						const endX = Math.min(gridWidth - 1, px + sightRadiusInCells);
+						const startY = Math.max(0, py - sightRadiusInCells);
+						const endY = Math.min(gridHeight - 1, py + sightRadiusInCells);
+
+						for (let y = startY; y <= endY; y++) {
+							for (let x = startX; x <= endX; x++) {
+								const dist = Math.max(Math.abs(x - px), Math.abs(y - py));
+								if (dist > sightRadiusInCells) continue;
+								
+								if (isLOSClear(px, py, x, y, walls, gridWidth, gridHeight)) {
+									// Add to playerVisionCells. We will treat this as dim light later.
+									playerVisionCells.add(`${x},${y}`);
+								}
+							}
+						}
+					});
+					
+					// --- Step 6: Finalize the dimLightCells set ---
+					// A cell is dim if it's in the initial dim light set OR in the player's inherent vision set,
+					// AS LONG AS it's not also in a bright light area.
+					playerVisionCells.forEach(cellKey => {
+						dimLightCells.add(cellKey);
+					});
+
+					brightLightCells.forEach(cellKey => {
+						dimLightCells.delete(cellKey); // Bright light overrides dim.
+					});
+
+					// The `playerVisionCells` set is no longer needed after this point, but we keep its data
+					// within the `dimLightCells` set for the mask rendering.
+
+					maskDirty = true; // Flag that the mask needs to be redrawn.
 				}
 
                 // --- Build the Visibility Mask Canvas (Corrected Logic & Fixed Typos) ---
@@ -1406,6 +1397,33 @@
 				// alpha = 0   -> Fully Visible (Bright Light OR Player's OWN Token Location OR Adjacent Wall revealed by vision/light)
 				// alpha = 0.6 -> Dimmed (Dim Light)
 				// alpha = 1   -> Solid Black Fog (Not Visible at all)
+				
+				function isAdjacentToKnowableCell(wallX, wallY) {
+					// Check the 8 neighbors of the given wall cell
+					for (let dy = -1; dy <= 1; dy++) {
+						for (let dx = -1; dx <= 1; dx++) {
+							// Skip the wall cell itself
+							if (dx === 0 && dy === 0) continue;
+
+							const checkX = wallX + dx;
+							const checkY = wallY + dy;
+
+							// Check if neighbor is within grid bounds
+							if (checkX < 0 || checkX >= currentGridWidthCells || checkY < 0 || checkY >= currentGridHeightCells) {
+								continue;
+							}
+
+							// The crucial check:
+							// 1. Is the neighboring cell NOT a wall?
+							// 2. Is that non-wall cell "knowable" (i.e., within vision/light range)?
+							if ((!walls[checkY] || walls[checkY][checkX] !== 1) && isCellKnowable(checkX, checkY)) {
+								return true; // Yes, this wall is next to a visible floor tile.
+							}
+						}
+					}
+					return false; // No adjacent knowable floor tiles were found.
+				}
+				
 				function buildVisibilityMask() {
 					// No mask needed for DM or when 'Show Map' is on
 					if (currentRole === 'dm' || isMapFullyVisible) {
@@ -1440,7 +1458,6 @@
 							 else if (dimLightCells.has(cellKey)) {
 								 maskOpacity = dimmingOpacity; // Semi-transparent in dim light
 							 }
-							 // Note: playerVisionCells themselves don't reduce mask opacity, they just make tokens knowable.
 
 
 							 // Override mask opacity if this cell is occupied by the CURRENT PLAYER's token(s)
@@ -1457,9 +1474,9 @@
 							 // Note: Player-owned cells already result in maskOpacity = 0.
 							 if (maskOpacity > 0 && // Only modify if not already clear
 								 walls[y] && walls[y][x] === 1 &&
-								 isCellKnowable(x, y)) // Check if the wall cell itself is knowable
+								 isAdjacentToKnowableCell(x, y)) // <--- USE THE NEW HELPER FUNCTION HERE
 							 {
-								 maskOpacity = 0; // Make the mask clear for wall cells that are knowable
+								 maskOpacity = 0; // Make the mask clear to reveal the wall
 							 }
 
 
@@ -1918,8 +1935,8 @@
 					document.querySelectorAll('.token-name').forEach(el => el.remove());
 
 					const minDistance = 40; // Minimum pixel distance between names
-
 					const visibleNames = [];
+					const occupiedPositions = new Set();
 
 					// Determine which tokens' names should potentially be displayed
 					tokensData.forEach(tokenData => {
@@ -1959,7 +1976,7 @@
 							// Overlap check applies if player, FoW is ON (Map Visible OFF), AND zoom is below threshold (using 1.0 as threshold)
 							// This prevents name clutter in dense areas under FoW unless zoomed in
 							// Also skip overlap check for important tokens (priority 2)
-							if (currentRole === 'player' && !isMapFullyVisible && scale < 1.0 && !isImportant) { // Corrected condition here
+							if (scale < 1.0 && !isImportant) { // Corrected condition here
 								 for (const visible of visibleNames) {
 									  // Skip overlap check against other important tokens
 									  if (visible.priority === 2) continue;
@@ -2003,6 +2020,14 @@
 
 					// Create and position name divs for the visible names
 					visibleNames.forEach(({ tokenData, screenX, screenY_top, priority }) => { // Include priority in destructuring
+						const posKey = `${Math.round(screenX)},${Math.round(screenY_top)}`;
+						const isHovered = priority === 2; // Priority 2 means it's hovered/dragged
+
+						// If a name is already at this position, AND this token is NOT the one being hovered, skip it.
+						if (occupiedPositions.has(posKey) && !isHovered) {
+							return; // This is the "continue" that skips drawing the overlapping name
+						}
+						occupiedPositions.add(posKey);
 						const nameDiv = document.createElement('div');
 						nameDiv.classList.add('token-name');
 
@@ -2551,29 +2576,42 @@
 							return;
 						}
 
+                        // --- DM TOKEN SPAWN LOGIC ---
+                        let spawnX = Math.floor(currentGridWidthCells / 2); // Default to center
+                        let spawnY = Math.floor(currentGridHeightCells / 2); // Default to center
+
+                        // Look for a token specifically named "Exit" for DM tokens
+                        const exitToken = tokensData.find(token => token.name && token.name.toLowerCase() === 'exit');
+
+                        if (exitToken) {
+                            // If an Exit token exists, use its coordinates
+                            spawnX = exitToken.x;
+                            spawnY = exitToken.y;
+                            console.log(`"Exit" token found. Spawning DM token at [${spawnX}, ${spawnY}].`);
+                        } else {
+                            console.log(`No "Exit" token found. Spawning DM token at default center.`);
+                        }
+						// --- END DM TOKEN SPAWN LOGIC ---
+
 						const newTokenData = {
 							name: nameValue || 'Unnamed Token', // Default name
-							x: Math.floor(currentGridWidthCells / 2), // Default position
-							y: Math.floor(currentGridHeightCells / 2),
+							x: spawnX, // <--- CORRECTED: Use the calculated spawnX
+							y: spawnY, // <--- CORRECTED: Use the calculated spawnY
 							imageUrl: imageUrl || null,
 							imageFilename: imageFile ? imageFile.name : null,
 							backgroundColor: !imageUrl ? (colorValue || 'grey') : null,
-							size: sizeValue || 1, // Default size
-							rotation: rotationValue || 0, // Default rotation
-
-							// Include DM-only stats (will be validated/ignored by server if role is not DM)
+							size: sizeValue || 1,
+							rotation: rotationValue || 0,
 							maxHP: maxHPValue,
 							hp: hpValue,
-							initiative: initValue, // Send initiative/AC even if DM-only class, server will handle role check
+							initiative: initValue,
 							ac: acValue,
                             sightRadius: sightRadiusValue,
                             isLightSource: isLightSource,
                             brightRange: brightRangeValue,
                             dimRange: dimRangeValue,
-
 							isMinion: isMinion,
-							owner: username // Set owner based on logged-in user
-							// parentOwner set on server if isMinion is true
+							owner: username // DM is always the owner here
 						};
 
 						console.log(`Attempting to add token: ${newTokenData.name}`);
@@ -2592,20 +2630,16 @@
 						document.getElementById('token-color').value = '';
 						document.getElementById('token-size').value = '1';
 						document.getElementById('token-rotation').value = '0';
-                        // Clear DM-only fields only if they exist (DM view)
 						if (maxHPInput) maxHPInput.value = '0';
 						if (hpInput) hpInput.value = '0';
 						if (initInput) initInput.value = '0';
 						if (acInput) acInput.value = '0';
-                        if (sightRadiusInput) sightRadiusInput.value = '30'; // Reset sight radius default
-                        if (isLightSourceCheckbox) isLightSourceCheckbox.checked = false; // Reset light source toggle
-                        // Hide light range inputs and reset their values if they exist
+                        if (sightRadiusInput) sightRadiusInput.value = '0'; // <--- CORRECTED: Reset to 0
+                        if (isLightSourceCheckbox) isLightSourceCheckbox.checked = false;
                         const lightRangeInputsDiv = document.querySelector('#add-token-form .light-range-inputs');
                          if (lightRangeInputsDiv) lightRangeInputsDiv.style.display = 'none';
                          if (brightRangeInput) document.getElementById('token-bright-range').value = '0';
                          if (dimRangeInput) document.getElementById('token-dim-range').value = '0';
-
-
 						document.getElementById('isMinion').checked = false;
 					}
 
@@ -2653,30 +2687,43 @@
 							return;
 						}
 
+                        // --- NEW SPAWN LOGIC ---
+                        let spawnX = Math.floor(currentGridWidthCells / 2); // Default to center
+                        let spawnY = Math.floor(currentGridHeightCells / 2); // Default to center
+
+                        // Look for a token specifically named "Start"
+                        const startToken = tokensData.find(token => token.name && token.name.toLowerCase() === 'start');
+
+                        if (startToken) {
+                            // If a Start token exists, use its coordinates
+                            spawnX = startToken.x;
+                            spawnY = startToken.y;
+                            console.log(`"Start" token found. Spawning player at [${spawnX}, ${spawnY}].`);
+                        } else {
+                            console.log(`No "Start" token found. Spawning player at default center.`);
+                        }
+                        // --- END NEW SPAWN LOGIC ---
+
 						const newTokenData = {
 							// ID is generated on the server
-							name: nameValue || `${username || 'Player'}'s Token`, // Default name
-							x: Math.floor(currentGridWidthCells / 2), // Default position
-							y: Math.floor(currentGridHeightCells / 2),
+							name: nameValue || `${username || 'Player'}'s Token`,
+							x: spawnX, // Use the determined spawnX
+							y: spawnY, // Use the determined spawnY
 							imageUrl: imageUrl || null,
 							imageFilename: imageFile ? imageFile.name : null,
 							backgroundColor: !imageUrl ? (colorValue || 'grey') : null,
-							size: sizeValue || 1, // Default size
-							rotation: rotationValue || 0, // Default rotation
-
-							// DM-only fields default to 0 or false for player-added tokens
+							size: sizeValue || 1,
+							rotation: rotationValue || 0,
 							maxHP: 0,
 							hp: 0,
 							initiative: 0,
 							ac: 0,
-                            sightRadius: playerDefaultSightRadius, // Assign default sight radius
-                            isLightSource: false, // Players cannot add light sources
+                            sightRadius: 0, // Player default sight
+                            isLightSource: false,
                             brightRange: 0,
                             dimRange: 0,
-
-							isMinion: isMinion, // Player can mark their own as minions?
-							owner: username // Set owner based on logged-in user
-							// parentOwner set on server if isMinion is true
+							isMinion: isMinion,
+							owner: username
 						};
 
 						console.log(`Attempting to add player token: ${newTokenData.name}`);
@@ -3101,95 +3148,63 @@
 						isLoading = true; // Set loading flag
 
 						if (file.name.endsWith(".zip")) {
-							// --- NEW ZIP IMPORT LOGIC ---
+							// --- CORRECTED ZIP IMPORT LOGIC ---
 							try {
 								const zip = await JSZip.loadAsync(file);
 								const sessionFile = zip.file("session_data.json");
-
-								if (!sessionFile) {
-									showNotification('Invalid ZIP: session_data.json not found.', true);
-									isLoading = false;
-									importStateFile.value = ''; // Clear file input
-									return;
-								}
+								if (!sessionFile) throw new Error('session_data.json not found in zip.');
 
 								const jsonString = await sessionFile.async("string");
 								const state = JSON.parse(jsonString);
+								if (!state || !state.tokens) throw new Error('Invalid session_data.json format.');
 
-								// Basic validation of the JSON structure
-								if (!state || !Array.isArray(state.tokens) || !state.gridSize) {
-									showNotification('Invalid session_data.json format inside ZIP.', true);
-									isLoading = false;
-									importStateFile.value = '';
-									return;
-								}
+								// Process all image paths into data URLs BEFORE emitting
+								const imageLoadPromises = [];
 
-								// 1. Pre-load images from the ZIP
-								const loadedImageObjects = {}; // Store promises for loaded image dataUrls
-
-								for (const token of state.tokens) {
-									if (token.imageUrl && token.imageUrl.startsWith('images/')) {
-										const imageFileInZip = zip.file(token.imageUrl);
-										if (imageFileInZip) {
-											try {
-												const base64Data = await imageFileInZip.async("base64");
-												const MimeTypeArray = token.imageUrl.split('.');
-												const fileExtension = MimeTypeArray[MimeTypeArray.length-1].toLowerCase();
-												let MimeType = 'image/png'; // Default
-												if (fileExtension === 'jpg' || fileExtension === 'jpeg') MimeType = 'image/jpeg';
-												else if (fileExtension === 'gif') MimeType = 'image/gif';
-												else if (fileExtension === 'webp') MimeType = 'image/webp';
-												// Add more as needed
-
-												token.imageUrl = `data:${MimeType};base64,${base64Data}`;
-												console.log(`Loaded ${token.imageUrl.substring(0,30)}... from zip for token ${token.name}`);
-											} catch (imgError) {
-												console.error(`Error loading image ${token.imageUrl} from zip for token ${token.name}:`, imgError);
-												token.imageUrl = null; // Or a placeholder
-											}
-										} else {
-											console.warn(`Image ${token.imageUrl} for token ${token.name} not found in zip.`);
-											token.imageUrl = null; // Or a placeholder
-										}
+								const processImage = async (path) => {
+									const imageFileInZip = zip.file(path);
+									if (!imageFileInZip) {
+										console.warn(`Image ${path} not found in zip.`);
+										return null;
 									}
-									// If token.imageUrl is an external URL, it remains as is.
-								}
+									const base64Data = await imageFileInZip.async("base64");
+									const fileExtension = path.split('.').pop().toLowerCase();
+									let mimeType = 'image/png';
+									if (fileExtension === 'jpg' || fileExtension === 'jpeg') mimeType = 'image/jpeg';
+									else if (fileExtension === 'gif') mimeType = 'image/gif';
+									else if (fileExtension === 'webp') mimeType = 'image/webp';
+									return `data:${mimeType};base64,${base64Data}`;
+								};
+								
+								state.tokens.forEach(token => {
+									if (token.imageUrl && token.imageUrl.startsWith('images/')) {
+										const promise = processImage(token.imageUrl).then(dataUrl => {
+											token.imageUrl = dataUrl;
+										});
+										imageLoadPromises.push(promise);
+									}
+								});
 
 								if (state.backgroundImageUrl && state.backgroundImageUrl.startsWith('images/')) {
-									const bgImageFileInZip = zip.file(state.backgroundImageUrl);
-									if (bgImageFileInZip) {
-										try {
-											const base64Data = await bgImageFileInZip.async("base64");
-											const MimeTypeArray = state.backgroundImageUrl.split('.');
-											const fileExtension = MimeTypeArray[MimeTypeArray.length-1].toLowerCase();
-											let MimeType = 'image/png'; // Default
-											if (fileExtension === 'jpg' || fileExtension === 'jpeg') MimeType = 'image/jpeg';
-											// ... more mime types
-											state.backgroundImageUrl = `data:${MimeType};base64,${base64Data}`;
-											console.log(`Loaded background image from zip.`);
-										} catch (bgImgError) {
-											console.error(`Error loading background image ${state.backgroundImageUrl} from zip:`, bgImgError);
-											state.backgroundImageUrl = null;
-										}
-									} else {
-										console.warn(`Background image ${state.backgroundImageUrl} not found in zip.`);
-										state.backgroundImageUrl = null;
-									}
+									const promise = processImage(state.backgroundImageUrl).then(dataUrl => {
+										state.backgroundImageUrl = dataUrl;
+									});
+									imageLoadPromises.push(promise);
 								}
 
-								// 2. Emit the processed state to the server (or handle directly if fully client-side)
-								// The server 'importState' should now expect image Data URLs
+								// Wait for all images to be converted to data URLs
+								await Promise.all(imageLoadPromises);
+								
+								// Now emit the fully processed state to the server
 								socket.emit('importState', state);
 								showNotification('Importing session from ZIP...');
-								// Server will broadcast 'fullStateUpdate' which handles the rest
 
 							} catch (err) {
 								console.error('Failed to process ZIP file:', err);
 								showNotification('Failed to import session from ZIP. Invalid or corrupted file.', true);
 								isLoading = false;
 							} finally {
-								importStateFile.value = ''; // Clear file input
-								// isLoading will be set to false by the fullStateUpdate handler
+								importStateFile.value = '';
 							}
 
 						} else if (file.name.endsWith(".json")) {
@@ -3702,7 +3717,7 @@
 
                     // Recalculate visibility for the new role
                     maskDirty = true;
-					drawGrid(); // Ensure redraw with correct mask
+					resizeCanvas();
 				});
 
 				// Initial state load
@@ -3783,9 +3798,7 @@
 					loadBackgroundImage(data.backgroundImageUrl || ''); // Load background asynchronously
 
 					maskDirty = true; // State initialized, need to calculate and build mask
-					resizeCanvas(); // Ensure canvas size matches window and mask canvas size is set, also calls drawGrid
-					// drawGrid is called recursively by requestAnimationFrame
-
+					
 					isLoading = false; // Loading is complete
 				});
 

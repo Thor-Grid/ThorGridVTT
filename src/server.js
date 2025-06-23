@@ -583,32 +583,38 @@ io.on('connection', (socket) => {
 
 				// --- ADDED: Normalize and ensure imported tokens have all properties on the SERVER ---
 				// This prevents crashes if the imported JSON is missing expected token properties
-				gameState.tokens = (newState.tokens || []).map(token => ({ // Ensure it's an array
-					...token, // Keep existing properties from the imported token
-					// Ensure numeric/boolean types and provide defaults for potentially missing properties
-					// Use gameState.gridSize after it's been set/defaulted above for position clamping
-					x: Number.isFinite(token.x) ? Number(token.x) : Math.floor((gameState.gridSize.width || 40) / 2), // Default position
-					y: Number.isFinite(token.y) ? Number(token.y) : Math.floor((gameState.gridSize.height || 30) / 2),
-					size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1, // Ensure size is valid number
-					rotation: Number.isFinite(token.rotation) ? Number(token.rotation) : 0, // Ensure numeric
-					maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0, // Ensure numeric
-					hp: token.hp !== undefined ? Number(token.hp) : 0,           // Ensure numeric
-					initiative: token.initiative !== undefined ? Number(token.initiative) : 0, // Ensure numeric
-					ac: token.ac !== undefined ? Number(token.ac) : 0,             // Ensure numeric
-					sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0, // Ensure numeric exists
-					isLightSource: Boolean(token.isLightSource), // Ensure boolean exists
-					brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0, // Ensure numeric exists
-					dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,         // Ensure numeric exists
-					isMinion: token.isMinion !== undefined ? Boolean(token.isMinion) : false, // Ensure boolean
-					owner: token.owner || null, // Ensure owner is string or null
-					parentOwner: token.parentOwner || null, // Ensure parentOwner is string or null
-					// Ensure image/color properties exist
-					imageUrl: token.imageUrl || null,
-					imageFilename: token.imageFilename || null,
-					backgroundColor: token.backgroundColor || null,
-					// Add a unique ID if it's missing from the imported token (prevents issues if importing older formats or manually crafted JSON)
-					id: token.id || `${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${token.name || 'token'}`
-				}));
+				gameState.tokens = (newState.tokens || []).map(token => {
+					let finalImageUrl = token.imageUrl || null;
+
+					// If the imageUrl is a relative path from a zip (e.g., "images/orc.png"),
+					// we need to convert it to a full data URL *if* the data was loaded from the zip.
+					// However, the client-side code now handles loading from the ZIP and converting to data:url
+					// before emitting. The server just needs to trust what it receives.
+					// The main job here is to ensure all other properties are valid.
+
+					return {
+						...token, // Keep existing properties
+						imageUrl: finalImageUrl, // Use the (potentially null) URL
+						// Ensure all other properties have safe defaults
+						x: Number.isFinite(token.x) ? Number(token.x) : 0,
+						y: Number.isFinite(token.y) ? Number(token.y) : 0,
+						size: Number.isFinite(token.size) && token.size > 0 ? Number(token.size) : 1,
+						rotation: Number.isFinite(token.rotation) ? Number(token.rotation) : 0,
+						maxHP: token.maxHP !== undefined ? Number(token.maxHP) : 0,
+						hp: token.hp !== undefined ? Number(token.hp) : 0,
+						initiative: token.initiative !== undefined ? Number(token.initiative) : 0,
+						ac: token.ac !== undefined ? Number(token.ac) : 0,
+						sightRadius: Number.isFinite(token.sightRadius) ? Number(token.sightRadius) : 0,
+						isLightSource: Boolean(token.isLightSource),
+						brightRange: Number.isFinite(token.brightRange) ? Number(token.brightRange) : 0,
+						dimRange: Number.isFinite(token.dimRange) ? Number(token.dimRange) : 0,
+						isMinion: Boolean(token.isMinion),
+						owner: token.owner || null,
+						parentOwner: token.parentOwner || null,
+						backgroundColor: token.backgroundColor || null,
+						id: token.id || `${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${token.name || 'token'}`
+					};
+				});
 				// --- END ADDED ---
 
 
