@@ -1,3 +1,4 @@
+`html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -423,6 +424,15 @@
         #dice-log p:last-child {
             border-bottom: none;
         }
+		#dice-log p[data-total] {
+			transition: background-color 0.2s ease;
+		}
+		body.role-dm #dice-log p[data-total] {
+			cursor: pointer;
+		}
+		body.role-dm #dice-log p[data-total]:hover {
+			background-color: rgba(0, 100, 255, 0.2);
+		}
         body.dark-mode #dice-log {
             border-color: #555;
             background-color: rgba(0,0,0,0.2);
@@ -602,6 +612,7 @@
                     </div>
                     
                     <button id="roll-dice-button" style="padding: 8px; font-size: 14px;">Roll Dice</button>
+					<button id="apply-damage-button" class="dm-controls destructive-action-button" style="margin-top: 5px;"> Damage to Selected</button>
                     
                     <!-- Dice Log HTML - Make sure this is NOT commented out -->
                     <div id="dice-log-container" style="margin-top: 10px;">
@@ -1003,6 +1014,7 @@
 				let currentInteractionMode = 'interact';
 				let isLoading = false; // Flag to prevent interaction while loading state
 				let hoveredTokenIndex = -1;
+                let selectedTokenIndex = -1; // <-- NEW: For persistent click-selection
 				let longPressTimeout = null;
 				let longPressStartX = 0;
 				let longPressStartY = 0;
@@ -1078,6 +1090,53 @@
 
 				let currentGridWidthCells = gridSizeOptions.small.width;
 				let currentGridHeightCells = gridSizeOptions.small.height;
+
+				// ADD this new function to your <script> block in multitg.html
+
+				// We need a single, persistent AudioContext for performance.
+				const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+				function generateAndPlayHitSound() {
+					if (!audioCtx) {
+						console.warn("Web Audio API not supported.");
+						return;
+					}
+
+					// --- Sound Parameters (You can tweak these!) ---
+					const duration = 0.15; // Total sound duration in seconds
+					const startFrequency = 440; // Pitch of the sound (A4 note)
+					const endFrequency = 120; // Pitch to slide down to for a "thud" effect
+					const volume = 0.3; // Keep volume reasonable (0.0 to 1.0)
+
+					// 1. Create the Oscillator - This is the sound wave source
+					const oscillator = audioCtx.createOscillator();
+					oscillator.type = 'square'; // 'square' gives a retro, sharp, "blip" sound. 'sine' is softer.
+
+					// 2. Create the Gain Node - This is the volume control
+					const gainNode = audioCtx.createGain();
+
+					// 3. Connect the parts: Oscillator -> Volume -> Speakers
+					oscillator.connect(gainNode);
+					gainNode.connect(audioCtx.destination);
+
+					// 4. Schedule the sound changes over time
+					const now = audioCtx.currentTime;
+
+					// Set initial volume and pitch
+					gainNode.gain.setValueAtTime(volume, now);
+					oscillator.frequency.setValueAtTime(startFrequency, now);
+
+					// Schedule the pitch to drop quickly for a "hit" or "thud" effect
+					oscillator.frequency.exponentialRampToValueAtTime(endFrequency, now + duration * 0.8);
+					
+					// Schedule the volume to fade out to (almost) zero
+					gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+					// 5. Start the sound now and schedule it to stop after its duration
+					oscillator.start(now);
+					oscillator.stop(now + duration);
+				}
+
 
 				function showNotification(message, isError = false) {
 					notificationDiv.textContent = message;
@@ -1659,7 +1718,8 @@
 								const width = gridSize * tokenSize;
 								const height = gridSize * tokenSize;
 								const rotation = (tokenData.rotation || 0) * Math.PI / 180;
-								const isSelected = index === hoveredTokenIndex || index === draggedTokenIndex;
+								// MODIFIED: A token is "selected" if it's the persistently selected one OR currently hovered
+                                const isSelected = index === hoveredTokenIndex || index === selectedTokenIndex;
 								let hpPercentage = 1;
 								const isLowHealth = tokenData.maxHP > 0 && tokenData.hp !== undefined && tokenData.hp / tokenData.maxHP < 0.25;
 
@@ -1861,6 +1921,37 @@
 					});
 				}
 				
+                // MODIFIED: Apply Damage button logic
+				const applyDamageButtonElement = document.getElementById('apply-damage-button');
+				if (applyDamageButtonElement && socket) {
+					applyDamageButtonElement.addEventListener('click', () => {
+						if (!socket || !socket.connected) {
+							showNotification('Not connected to server. Cannot apply damage.', true);
+							return;
+						}
+
+						// MODIFIED: Check if a token is selected using the new persistent `selectedTokenIndex`
+						if (selectedTokenIndex === -1) {
+							showNotification('Please CLICK to select a token to apply damage to.', false);
+							return;
+						}
+						
+						const diceString = diceInputElement.value.trim();
+						if (!diceString) {
+							showNotification('Please enter a damage roll (e.g., 2d8+5).', false);
+							return;
+						}
+
+						const targetId = tokensData[selectedTokenIndex].id;
+
+						// Emit a new, specific event for applying damage
+						socket.emit('applyDamage', {
+							diceString: diceString,
+							targetId: targetId
+						});
+					});
+				}
+				
 				function playDiceSound() {
 					if (rollSoundElement) {
 						// Check if the audio element is ready to play (optional but good practice)
@@ -1881,51 +1972,71 @@
 					}
 				}
 
-				if (socket) {
-					socket.on('diceResult', (data) => {
-						// Play the sound for ANY dice result received
-						playDiceSound(); // <--- ADD THIS LINE
-						
-						if (diceLogElement) {
-							const rollEntry = document.createElement('p');
-							const time = new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-							let messageHtml = "";
+				socket.on('diceResult', (data) => {
+					playDiceSound();
+					
+					if (diceLogElement) {
+						const rollEntry = document.createElement('p');
+						const time = new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+						let messageHtml = "";
 
-							// data.isHiddenByDM: true if DM intended to hide.
-							// data.forPlayerView: true if this is the "private" message for players.
-							//                       false if it's the full result (either public, or DM's own hidden roll).
-
-							if (data.isHiddenByDM && data.forPlayerView && currentRole !== 'dm') {
-								// Scenario: Player receives a "DM rolled privately" message.
-								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input || 'dice'}</em>:<br>  ${data.output}`;
-							} else if (data.isHiddenByDM && !data.forPlayerView && currentRole === 'dm' && data.roller === username) {
-								// Scenario: DM receives their OWN hidden roll (full details).
-								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>) <em style="color: #aaa;">(Hidden from players)</em>`;
-							} else if (!data.isHiddenByDM) {
-								// Scenario: Public roll (DM or Player), or a player rolling for themselves. Everyone sees full details.
-								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>)`;
-							} else {
-								// Fallback or unexpected scenario - might indicate a logic issue if this branch is hit often.
-								// For now, just display basic info. This case should ideally not be common if server logic is correct.
-								// This could happen if a player somehow gets a message intended only for the DM (e.g., if broadcast logic was wrong)
-								// or if a DM gets a "forPlayerView" message (which shouldn't happen with socket.broadcast).
-								console.warn("Dice log: Unhandled display case for diceResult data:", data);
-								messageHtml = `[${time}] <strong>${data.roller}</strong> rolled.`;
-							}
-							
-							rollEntry.innerHTML = messageHtml;
-							
-							if (diceLogElement.firstChild) {
-								diceLogElement.insertBefore(rollEntry, diceLogElement.firstChild);
-							} else {
-								diceLogElement.appendChild(rollEntry);
-							}
-
-							const maxLogEntries = 50;
-							while (diceLogElement.children.length > maxLogEntries) {
-								diceLogElement.removeChild(diceLogElement.lastChild);
-							}
+						// Embed data into the element for the click listener
+						if (typeof data.total === 'number' && !isNaN(data.total)) {
+							rollEntry.dataset.total = data.total;
+							rollEntry.dataset.roller = data.roller; // Store who rolled it
 						}
+
+						if (data.isHiddenByDM && data.forPlayerView && currentRole !== 'dm') {
+							messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input || 'dice'}</em>:<br>  ${data.output}`;
+						} else if (data.isHiddenByDM && !data.forPlayerView && currentRole === 'dm' && data.roller === username) {
+							messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>) <em style="color: #aaa;">(Hidden from players)</em>`;
+						} else if (!data.isHiddenByDM) {
+							messageHtml = `[${time}] <strong>${data.roller}</strong> rolled <em>${data.input}</em>:<br>  ${data.output} (Total: <strong>${data.total}</strong>)`;
+						} else {
+							console.warn("Dice log: Unhandled display case for diceResult data:", data);
+							messageHtml = `[${time}] <strong>${data.roller}</strong> rolled.`;
+						}
+						
+						rollEntry.innerHTML = messageHtml;
+						
+						if (diceLogElement.firstChild) {
+							diceLogElement.insertBefore(rollEntry, diceLogElement.firstChild);
+						} else {
+							diceLogElement.appendChild(rollEntry);
+						}
+
+						const maxLogEntries = 50;
+						while (diceLogElement.children.length > maxLogEntries) {
+							diceLogElement.removeChild(diceLogElement.lastChild);
+						}
+					}
+				});
+
+				// This listener handles clicks on the entire dice log container
+				if (diceLogElement) {
+					diceLogElement.addEventListener('click', (event) => {
+						// This feature is DM-only
+						if (currentRole !== 'dm') return;
+
+						// Find the specific <p> element that was clicked
+						const clickedEntry = event.target.closest('p[data-total]');
+						if (!clickedEntry) return; // Ignore clicks on the background or on entries without a total
+
+						if (selectedTokenIndex === -1) {
+							showNotification('Please click a token to apply damage to first.', false);
+							return;
+						}
+
+						const damage = parseInt(clickedEntry.dataset.total, 10);
+						const dealerUsername = clickedEntry.dataset.roller; // Get the original roller's name
+						const targetId = tokensData[selectedTokenIndex].id;
+
+						// Emit the event to the server
+						socket.emit('applySpecificDamage', {
+							damage: damage,
+							targetId: targetId,
+							dealerUsername: dealerUsername
+						});
 					});
 				}
 
@@ -1967,7 +2078,8 @@
 
 							// Check if this is the currently hovered or dragged token for priority
 							const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
-							const isImportant = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
+							// MODIFIED: "Important" now includes the persistently selected token
+                            const isImportant = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex || originalIndex === selectedTokenIndex;
 							const priority = isImportant ? 2 : 0; // Priority 2 for important, 0 for others
 
 
@@ -2063,7 +2175,8 @@
 
 						// Add hovered style and set z-index
 						const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
-						const isCurrentlySelected = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex;
+						// MODIFIED: Selection check includes persistent selection
+                        const isCurrentlySelected = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex || originalIndex === selectedTokenIndex;
 
 						// Use priority for z-index: Higher priority tokens (selected/dragged) get higher z-index (100). Others get 10.
 						nameDiv.style.zIndex = priority === 2 ? '100' : '10';
@@ -2127,6 +2240,7 @@
 					return null; // No interactive token found at position
 				}
 
+                // MODIFIED: handleInteractionStart now implements click-to-select
 				function handleInteractionStart(clientX, clientY) {
 					if (isLoading || isContextMenuOpen) return; // Prevent interaction while loading or menu is open
 
@@ -2134,25 +2248,26 @@
 					const canvasX = (clientX - rect.left - panX) / scale;
 					const canvasY = (clientY - rect.top - panY) / scale;
 
-					// console.log(`Interaction start at canvasX: ${canvasX}, canvasY: ${canvasY}`); // Verbose log
-
 					if (currentInteractionMode === 'interact') {
 						const tokenInfo = getTokenAtPosition(canvasX, canvasY);
-						// The filter in getTokenAtPosition already handles DM/ownership checks and knowability
+
 						if (tokenInfo) {
+                            // A token was clicked. This is now the selected token.
+                            selectedTokenIndex = tokenInfo.index; // <-- NEW: Set persistent selection
+							
+                            // Start dragging the token.
 							draggedToken = tokenInfo.token;
 							draggedTokenIndex = tokenInfo.index;
-							// Calculate offset relative to token's top-left corner of its bounding box
 							offsetX = canvasX - draggedToken.x * gridSize;
 							offsetY = canvasY - draggedToken.y * gridSize;
-							// console.log(`Dragging token: ${draggedToken.name}, offsetX: ${offsetX}, offsetY: ${offsetY}`); // Verbose log
-							drawGrid();
+                            drawGrid(); // Redraw to show selection immediately
 						} else {
-							// Start panning if no interactive token is clicked at this mode
+                            // The background was clicked. Deselect any token and start panning.
+                            selectedTokenIndex = -1; // <-- NEW: Deselect on background click
 							isPanning = true;
 							startX = clientX;
 							startY = clientY;
-							// console.log('Starting panning'); // Verbose log
+                            drawGrid(); // Redraw to remove selection highlight
 						}
 					} else if (currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) {
 						// Only DM can draw/erase walls
@@ -2530,6 +2645,7 @@
 						clearTimeout(longPressTimeout);
 						longPressTimeout = null;
 					}
+                    // NOTE: We DO NOT reset `selectedTokenIndex` here. That only happens on a new click.
 					// Flag mask as dirty because token movement or ending wall drawing might change visibility
                     maskDirty = true;
 					drawGrid(); // Redraw to reflect final state and clear effects (like drag)
@@ -3448,7 +3564,7 @@
                     if (longPressTimeout && event.touches.length === 1) {
                          const touch = event.touches[0];
                          const dx = touch.clientX - longPressStartX;
-                         const dy = touch.changedTouches[0].clientY - longPressStartY;
+                         const dy = event.changedTouches[0].clientY - longPressStartY;
                          const distance = Math.sqrt(dx*dx + dy*dy);
                          if (distance > 10) {
                              clearTimeout(longPressTimeout);
@@ -3884,6 +4000,39 @@
 				});
 
 
+				socket.on('damageApplied', (data) => {
+					generateAndPlayHitSound();
+					if (diceLogElement) {
+						const entry = document.createElement('p');
+						const time = new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+						let messageHtml = "";
+
+						// Determine if "You" should be displayed
+						const dealerName = data.dealer === username ? "You" : `<strong>${data.dealer}</strong>`;
+						const targetName = `<strong>${data.targetName}</strong>`;
+
+						if (data.forDM && currentRole === 'dm') {
+							// DM's detailed view
+							const rollText = data.rollNotation ? ` ${data.rollNotation}` : '';
+							messageHtml = `[${time}] ${targetName} takes <strong>${data.damage}</strong> damage from ${dealerName}${rollText}. (HP: ${data.newHP}/${data.maxHP})`;
+						} else if (!data.forDM) {
+							// Player's public view
+							const rollText = data.rollNotation ? ` ${data.rollNotation}` : '';
+							messageHtml = `[${time}] ${targetName} takes <strong>${data.damage}</strong> damage from ${dealerName}${rollText}.`;
+						}
+
+						// Only add the entry if a message was generated (protects players from seeing DM-only events)
+						if (messageHtml) {
+							entry.innerHTML = messageHtml;
+							if (diceLogElement.firstChild) {
+								diceLogElement.insertBefore(entry, diceLogElement.firstChild);
+							} else {
+								diceLogElement.appendChild(entry);
+							}
+						}
+					}
+				});
+
 				socket.on('updateTokens', (tokens) => {
 					// Merge updates to preserve local imageObj and ensure new properties
 					tokensData = tokens.map(updatedToken => {
@@ -3917,6 +4066,10 @@
                     }
                     if (hoveredTokenIndex !== -1 && !tokensData.some(t => t.id === tokensData[hoveredTokenIndex]?.id)) {
                          hoveredTokenIndex = -1;
+                    }
+                    // NEW: If the selected token was removed, deselect it.
+                    if (selectedTokenIndex !== -1 && !tokensData[selectedTokenIndex]) {
+                        selectedTokenIndex = -1;
                     }
 
 

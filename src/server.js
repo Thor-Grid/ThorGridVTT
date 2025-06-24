@@ -767,6 +767,114 @@ io.on('connection', (socket) => {
 		}
 	});
 	
+	socket.on('applyDamage', ({ diceString, targetId }) => {
+		const username = getUsernameFromSocket(socket);
+		const userRole = roleFromSocket(socket);
+
+		if (userRole !== 'dm') {
+			socket.emit('error', 'Only the DM can apply damage.');
+			return;
+		}
+
+		const token = gameState.tokens.find(t => t.id === targetId);
+		if (!token) {
+			socket.emit('error', `Token with ID ${targetId} not found.`);
+			return;
+		}
+
+		try {
+			const roll = new DiceRoll(diceString);
+			const damageDealt = roll.total;
+			const oldHP = token.hp;
+
+			token.hp = Math.max(0, token.hp - damageDealt);
+
+			console.log(`${username} dealt ${damageDealt} damage to "${token.name}". HP: ${oldHP} -> ${token.hp}`);
+
+			io.emit('updateTokens', gameState.tokens);
+
+			// --- NEW: Use the structured damage notification system ---
+			const damageInfo = {
+				dealer: username,
+				targetName: token.name,
+				damage: damageDealt,
+				newHP: token.hp,
+				maxHP: token.maxHP,
+				rollNotation: `(${roll.output})`, // Include dice roll details
+				timestamp: new Date().toISOString()
+			};
+
+			// Send full details ONLY to the DMs
+			connectedDMs.forEach(dmSocketId => {
+				io.to(dmSocketId).emit('damageApplied', { ...damageInfo, forDM: true });
+			});
+
+			// Send limited details to all players
+			const playerSockets = new Map([...connectedPlayers].filter(([id]) => !connectedDMs.has(id)));
+			playerSockets.forEach((_, playerSocketId) => {
+				io.to(playerSocketId).emit('damageApplied', { ...damageInfo, forDM: false });
+			});
+
+			saveStateDebounced();
+
+		} catch (error) {
+			console.error(`Error applying damage "${diceString}" for ${username}:`, error.message);
+			socket.emit('error', `Invalid dice notation: ${error.message}`);
+		}
+	});
+	
+	socket.on('applySpecificDamage', ({ damage, targetId, dealerUsername }) => {
+		const userRole = roleFromSocket(socket);
+
+		if (userRole !== 'dm') {
+			socket.emit('error', 'Only the DM can apply damage.');
+			return;
+		}
+
+		const token = gameState.tokens.find(t => t.id === targetId);
+		if (!token) {
+			socket.emit('error', `Token with ID ${targetId} not found.`);
+			return;
+		}
+
+		const damageValue = Number(damage);
+		if (!Number.isFinite(damageValue)) {
+			socket.emit('error', 'Invalid damage amount provided.');
+			return;
+		}
+
+		const oldHP = token.hp;
+		token.hp = Math.max(0, token.hp - damageValue);
+
+		console.log(`DM applied ${damageValue} damage to "${token.name}" (from ${dealerUsername}'s roll). HP: ${oldHP} -> ${token.hp}`);
+
+		// Broadcast updated tokens so HP tint updates
+		io.emit('updateTokens', gameState.tokens);
+
+		// --- Use the structured damage notification system ---
+		const damageInfo = {
+			dealer: dealerUsername, // The player who originally rolled
+			targetName: token.name,
+			damage: damageValue,
+			newHP: token.hp,
+			maxHP: token.maxHP,
+			timestamp: new Date().toISOString()
+		};
+		
+		// Send full details ONLY to the DMs
+		connectedDMs.forEach(dmSocketId => {
+			io.to(dmSocketId).emit('damageApplied', { ...damageInfo, forDM: true });
+		});
+
+		// Send limited details to all players
+		const playerSockets = new Map([...connectedPlayers].filter(([id]) => !connectedDMs.has(id)));
+		playerSockets.forEach((_, playerSocketId) => {
+			io.to(playerSocketId).emit('damageApplied', { ...damageInfo, forDM: false });
+		});
+		
+		saveStateDebounced();
+	});
+	
 	socket.on('clearBoard', () => {
         if (roleFromSocket(socket) === 'dm') {
             console.log(`Board clear requested by DM: ${getUsernameFromSocket(socket)}`);
