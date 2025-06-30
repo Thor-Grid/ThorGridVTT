@@ -220,6 +220,16 @@ def generate_and_save_dungeon(settings):
                 if is_touching_room and is_touching_corridor:
                     door_locations.add((x, y))
 
+                    # I want a single door token unless there is multiple floor all_room_tiles
+                    # Count how many adjacent floor tiles in all_room_tiles (i.e., how many room tiles touch this door)
+                    adjacent_room_tiles = 0
+                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        nx, ny = x + dx, y + dy
+                        if (nx, ny) in all_room_tiles:
+                            adjacent_room_tiles += 1
+                    # Only add a door token if there is exactly one adjacent room tile (i.e., not a double door)
+                    if adjacent_room_tiles > 1:
+                        continue  # Skip adding a door token for double/multi doors
     # Finally, sort rooms by x-coordinate to determine Start and Exit
     rooms.sort(key=lambda r: r.x1)
     start_room, end_room = rooms[0], rooms[-1]
