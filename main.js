@@ -5,7 +5,7 @@
 // No further main process logic needs to run in this case.
 if (require('electron-squirrel-startup')) return;
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs'); // Need fs to ensure directory exists
@@ -173,6 +173,32 @@ app.whenReady().then(async () => {
 					primaryLan: primaryLanAddress, // The single preferred LAN address
 					allLan: allPossibleLanAddresses // Array of all non-internal addresses (for info)
 				};
+			});
+			ipcMain.handle('dialog:open-file', async () => {
+				const { canceled, filePaths } = await dialog.showOpenDialog({
+					properties: ['openFile'],
+					filters: [
+						{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }
+					]
+				});
+				if (canceled || filePaths.length === 0) {
+					return null; // User cancelled the dialog
+				}
+				try {
+					const filePath = filePaths[0];
+					const data = await fs.promises.readFile(filePath);
+					const base64 = data.toString('base64');
+					const extension = path.extname(filePath).substring(1).toLowerCase();
+					let mimeType = 'image/jpeg'; // Default
+					if (extension === 'png') mimeType = 'image/png';
+					if (extension === 'gif') mimeType = 'image/gif';
+					if (extension === 'webp') mimeType = 'image/webp';
+					
+					return `data:${mimeType};base64,${base64}`;
+				} catch (err) {
+					console.error("Failed to read the selected file:", err);
+					return null;
+				}
 			});
 
 

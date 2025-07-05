@@ -1629,19 +1629,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
 						// --- Context Menu Logic ---
 						// --- Context Menu Logic ---
+				// --- Context Menu Logic ---
+		// REPLACE your existing showContextMenu function with this one
+
 		function showContextMenu(clientX, clientY, tokenIndex) {
 			// Remove any existing context menus
 			document.querySelectorAll('.token-context-menu').forEach(m => m.remove());
-			// isContextMenuOpen is set to true later, after the menu is added
+			isContextMenuOpen = true; // Set flag immediately to prevent other interactions
 
 			const menu = document.createElement('div');
 			menu.classList.add('token-context-menu');
-			// Position the menu - ensure it doesn't go offscreen (basic check)
-			// Initial position before size check
 			let menuX = clientX;
 			let menuY = clientY;
 
-			// Add base styles before appending to measure
+			// Add base styles
 			if (document.body.classList.contains('dark-mode')) {
 				menu.style.backgroundColor = '#222';
 				menu.style.border = '1px solid white';
@@ -1652,29 +1653,36 @@ document.addEventListener('DOMContentLoaded', () => {
 				menu.style.color = 'black';
 			}
 			menu.style.padding = '8px';
-			menu.style.zIndex = '1000'; // High z-index to be on top
+			menu.style.zIndex = '1000';
 			menu.style.borderRadius = '4px';
-			menu.style.boxShadow = '2px 2px 8px rgba(0,0,0,0.3)'; // Add shadow
-			menu.style.display = 'flex'; // Use flexbox for internal layout
+			menu.style.boxShadow = '2px 2px 8px rgba(0,0,0,0.3)';
+			menu.style.display = 'flex';
 			menu.style.flexDirection = 'column';
-			menu.style.gap = '6px'; // Space between elements
-
+			menu.style.gap = '6px';
 
 			const token = tokensData[tokenIndex];
 			if (!token) {
-					isContextMenuOpen = false; // Reset flag if token not found
-					return;
+				isContextMenuOpen = false;
+				return;
 			}
 
-
 			// Build menu content based on role and token ownership
-			// Start with the token name
 			let menuHTML = `<div style="font-weight: bold; margin-bottom: 2px; text-align: center;">${token.name}</div>`;
 
-			// --- Add role-specific content inputs/displays ---
+			// --- Add role-specific content ---
 			if (currentRole === 'dm') {
-				// Add all DM controls (remove button, editable inputs for rotate, sight, light, hp, init, ac)
+				// --- MODIFICATION: Added Rename, Re-image, and separator for DM ---
 				menuHTML += `
+					<div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Name:</label>
+                        <input type="text" class="name-input" value="${token.name}" style="flex-grow: 1; padding: 4px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Image URL:</label>
+                        <input type="text" class="image-url-input" value="${token.imageUrl || ''}" style="flex-grow: 1; padding: 4px;">
+                        <button class="browse-image-button" style="padding: 4px 8px; flex-shrink: 0;">...</button>
+                    </div>
+                    <hr style="border: 0; border-top: 1px solid #555; margin: 4px 0;">
 					<button class="remove-token" style="width: 100%; background: #ffdddd; border: 1px solid red; padding: 6px; cursor: pointer;">Remove Token</button>
 					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Rotate:</label>
@@ -1717,7 +1725,7 @@ document.addEventListener('DOMContentLoaded', () => {
 				`;
 
 			} else if (token.owner === username || (token.isMinion && token.parentOwner === username)) {
-				// Player owns token - Add player-editable fields (Rotate) and viewable (Sight, Light, HP, Init, AC)
+				// Player owns token - Add player-editable fields (Rotate) and viewable info
 				menuHTML += `
 					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Rotate:</label>
@@ -1729,189 +1737,164 @@ document.addEventListener('DOMContentLoaded', () => {
 					</div>
 					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
-							<div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
+						<div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 					</div>
-					<!-- Add read-only HP, Init, and AC displays for player-owned tokens -->
 					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">HP:</label>
 						<div style="flex-grow: 1; font-size: 0.9em;">${token.maxHP > 0 && token.hp !== undefined ? `${token.hp}/${token.maxHP}` : (token.hp !== undefined ? token.hp : '--/--')}</div>
-						</div>
-						<div style="display: flex; align-items: center; gap: 6px;">
-						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
-						<div style="flex-grow: 1; font-size: 0.9em;">${token.initiative !== undefined ? token.initiative : '--'}</div>
-						</div>
-						<div style="display: flex; align-items: center; gap: 6px;">
-						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
-						<div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
-						</div>
-						<!-- Optional: Add player-editable HP/Init here if desired. Uncomment and update Save logic below. -->
-						<!--
-						<div style="display: flex; align-items: center; gap: 6px;">
-						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Cur HP:</label>
-						<input type="number" class="hp-input" value="${token.hp || 0}" min="0" style="flex-grow: 1; padding: 4px;">
 					</div>
 					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
-						<input type="number" class="init-input" value="${token.initiative || 0}" style="flex-grow: 1; padding: 4px;">
+						<div style="flex-grow: 1; font-size: 0.9em;">${token.initiative !== undefined ? token.initiative : '--'}</div>
 					</div>
-					-->
+					<div style="display: flex; align-items: center; gap: 6px;">
+						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
+						<div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
+					</div>
 				`;
-
 			} else {
-				// Player does not own token - Add name and read-only info (Light, maybe HP/Init/AC)
-				// For non-owned tokens, let's add read-only HP, Init, and AC too, as they are combat relevant
-					menuHTML += `
+				// Player does not own token - Add read-only info
+				menuHTML += `
 					<div style="font-size: 0.9em; padding: 6px; text-align: center;">(You don't own this token)</div>
-						<div style="display: flex; align-items: center; gap: 6px;">
+					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Light:</label>
-							<div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
+						<div style="flex-grow: 1; font-size: 0.9em;">${token.isLightSource ? `${token.brightRange || 0}/${token.dimRange || 0}` : 'No'}</div>
 					</div>
-					<!-- Add read-only displays for HP/Init/AC for non-owned tokens -->
-						<div style="display: flex; align-items: center; gap: 6px;">
+					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">HP:</label>
 						<div style="flex-grow: 1; font-size: 0.9em;">${token.maxHP > 0 && token.hp !== undefined ? `${token.hp}/${token.maxHP}` : (token.hp !== undefined ? token.hp : '--/--')}</div>
-						</div>
-						<div style="display: flex; align-items: center; gap: 6px;">
+					</div>
+					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">Init:</label>
 						<div style="flex-grow: 1; font-size: 0.9em;">${token.initiative !== undefined ? token.initiative : '--'}</div>
-						</div>
-						<div style="display: flex; align-items: center; gap: 6px;">
+					</div>
+					<div style="display: flex; align-items: center; gap: 6px;">
 						<label style="font-size: 0.9em; flex-shrink: 0; width: 60px;">AC:</label>
 						<div style="flex-grow: 1; font-size: 0.9em;">${token.ac !== undefined ? token.ac : '--'}</div>
-						</div>
+					</div>
 				`;
 			}
 
-			// --- Now add the buttons using correct JavaScript conditionals ---
-			// This block correctly appends the appropriate buttons AFTER the content HTML
+			// --- Buttons ---
 			if (currentRole === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username)) {
-					// If user is DM OR owns the token (or its minion), add Save and Cancel buttons
-					menuHTML += `
+				menuHTML += `
 					<div style="display: flex; gap: 6px; margin-top: 4px;">
 						<button class="save-button" style="flex-grow: 1; background: #ddffdd; border: 1px solid green; padding: 6px; cursor: pointer;">Save</button>
 						<button class="cancel-button" style="flex-grow: 1; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer;">Cancel</button>
 					</div>
-					`;
+				`;
 			} else {
-					// Otherwise (user is a player and *doesn't* own the token), add only the Close button
-					menuHTML += `<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer; margin-top: 4px;">Close</button>`;
+				menuHTML += `<button class="cancel-button" style="width: 100%; background: #dddddd; border: 1px solid gray; padding: 6px; cursor: pointer; margin-top: 4px;">Close</button>`;
 			}
 
+			menu.innerHTML = menuHTML;
+			document.body.appendChild(menu);
 
-			menu.innerHTML = menuHTML; // Assign the final built HTML string to the menu element
-			document.body.appendChild(menu); // Append the menu to the document
-
-
-			// --- Attach Event Listeners (MUST query elements *after* innerHTML is set) ---
-
-			// Positioning logic (Your original positioning logic seems correct)
+			// --- Attach Event Listeners ---
 			const menuWidthActual = menu.offsetWidth;
 			const menuHeightActual = menu.offsetHeight;
-			menuX = clientX;
-			menuY = clientY;
-			if (menuX + menuWidthActual > window.innerWidth - 10) { menuX = window.innerWidth - menuWidthActual - 10; }
-			if (menuY + menuHeightActual > window.innerHeight - 10) { menuY = window.innerHeight - menuHeightActual - 10; }
-			menuX = Math.max(10, menuX); // Ensure min 10px from left/top
+			if (clientX + menuWidthActual > window.innerWidth - 10) { menuX = window.innerWidth - menuWidthActual - 10; }
+			if (clientY + menuHeightActual > window.innerHeight - 10) { menuY = window.innerHeight - menuHeightActual - 10; }
+			menuX = Math.max(10, menuX);
 			menuY = Math.max(10, menuY);
 			menu.style.left = `${menuX}px`;
 			menu.style.top = `${menuY}px`;
 
+			const browseButton = menu.querySelector('.browse-image-button');
+			if (browseButton) {
+				browseButton.addEventListener('click', async (e) => {
+					e.stopPropagation();
+					if (isElectron) {
+						try {
+							const dataUrl = await window.electronAPI.openFile();
+							if (dataUrl) {
+								const imageUrlInput = menu.querySelector('.image-url-input');
+								imageUrlInput.value = dataUrl;
+							}
+						} catch (err) {
+							console.error("Error opening file dialog:", err);
+							showNotification("Could not open file.", true);
+						}
+					} else {
+						showNotification("Local file browsing is only available in the Electron app.", false);
+					}
+				});
+			}
 
-			// Add listener for Light Source checkbox to show/hide range inputs (DM only)
-			// Query using the ID added to the input in the DM menuHTML
-			const lightSourceCheckbox = menu.querySelector('#context-isLightSource'); // Use ID
-			// Also query the bright/dim inputs here for the change listener
-			const brightRangeInputForListener = menu.querySelector('#context-bright-range');
-			const dimRangeInputForListener = menu.querySelector('#context-dim-range');
-
-			// The lightRangeInputsDiv itself is queried by class as it's the container div
+			const lightSourceCheckbox = menu.querySelector('#context-isLightSource');
 			const lightRangeInputsDiv = menu.querySelector('.light-range-inputs');
-
-			// This check implicitly only runs for DM menus because only DM menus have the checkbox/div
-			if (lightSourceCheckbox && lightRangeInputsDiv && brightRangeInputForListener && dimRangeInputForListener) {
+			if (lightSourceCheckbox && lightRangeInputsDiv) {
+				const brightRangeInputForListener = menu.querySelector('#context-bright-range');
+				const dimRangeInputForListener = menu.querySelector('#context-dim-range');
 				lightSourceCheckbox.addEventListener('change', () => {
 					const isChecked = lightSourceCheckbox.checked;
 					lightRangeInputsDiv.style.display = isChecked ? 'flex' : 'none';
-					// Optional: Clear values when unchecked
-					if (!isChecked) {
+					if (!isChecked && brightRangeInputForListener && dimRangeInputForListener) {
 						brightRangeInputForListener.value = '0';
 						dimRangeInputForListener.value = '0';
 					}
 				});
-				// No need to set initial state here, it's set in the menuHTML string based on token data
 			}
 
-
-			// Listener for the Remove button (DM only)
 			const removeButton = menu.querySelector('.remove-token');
 			if (removeButton) { // This implicitly checks for DM role
 				removeButton.addEventListener('click', (e) => {
 					e.stopPropagation();
-					socket.emit('removeToken', token.id);
-					menu.remove();
-					isContextMenuOpen = false;
+					if (confirm(`Are you sure you want to remove the token "${token.name}"?`)) {
+						socket.emit('removeToken', token.id);
+						menu.remove();
+						isContextMenuOpen = false;
+					}
 				});
 			}
 
-			// Listener for the Save button (DM or Player Owner)
 			const saveButton = menu.querySelector('.save-button');
-			if (saveButton) { // This implicitly checks for DM or Player Owner existence because those are the only roles with this button
+			if (saveButton) {
 				saveButton.addEventListener('click', (e) => {
 					e.stopPropagation();
 
+					// Start building the update object
+					const statsToUpdate = { tokenId: token.id };
+
+					// Query all possible inputs that could exist in the menu
+                    const nameInput = menu.querySelector('.name-input');
+                    const imageUrlInput = menu.querySelector('.image-url-input');
 					const rotateInput = menu.querySelector('.rotate-input');
-					let rotation = rotateInput ? parseInt(rotateInput.value, 10) % 360 : token.rotation;
-					if (isNaN(rotation)) rotation = token.rotation || 0;
+					const maxHPInput = menu.querySelector('.max-hp-input');
+					const hpInput = menu.querySelector('.hp-input');
+					const initInput = menu.querySelector('.init-input');
+					const acInput = menu.querySelector('.ac-input');
+					const sightInput = menu.querySelector('.sight-input');
+					const lightCheckbox = menu.querySelector('#context-isLightSource');
+					const brightRangeInput = menu.querySelector('#context-bright-range');
+					const dimRangeInput = menu.querySelector('#context-dim-range');
 
-					// Start building the update object - always include tokenId and rotation
-					let statsToUpdate = { tokenId: token.id, rotation: rotation };
+					// Add values to payload if the corresponding input exists
+                    if (nameInput) statsToUpdate.name = nameInput.value.trim();
+                    if (imageUrlInput) statsToUpdate.imageUrl = imageUrlInput.value.trim();
+					if (rotateInput) statsToUpdate.rotation = parseInt(rotateInput.value, 10) % 360 || 0;
+					if (maxHPInput) statsToUpdate.maxHP = parseInt(maxHPInput.value, 10) || 0;
+					if (hpInput) statsToUpdate.hp = parseInt(hpInput.value, 10) || 0;
+					if (initInput) statsToUpdate.initiative = parseInt(initInput.value, 10) || 0;
+					if (acInput) statsToUpdate.ac = parseInt(acInput.value, 10) || 0;
+					if (sightInput) statsToUpdate.sightRadius = parseInt(sightInput.value, 10) || 0;
+					if (lightCheckbox) statsToUpdate.isLightSource = lightCheckbox.checked;
+					if (brightRangeInput) statsToUpdate.brightRange = parseInt(brightRangeInput.value, 10) || 0;
+					if (dimRangeInput) statsToUpdate.dimRange = parseInt(dimRangeInput.value, 10) || 0;
+                    
+                    // The server will handle dim >= bright logic, but we can do it here too
+                    if (statsToUpdate.brightRange !== undefined && statsToUpdate.dimRange < statsToUpdate.brightRange) {
+                        statsToUpdate.dimRange = statsToUpdate.brightRange;
+                    }
 
-					// Query all possible inputs that could exist in the menu, regardless of role.
-					// Their values will only be used if the role allows it and the input element exists.
-					const maxHPInput = menu.querySelector('.max-hp-input');       // DM only
-					const hpInput = menu.querySelector('.hp-input');             // DM (or Player if uncommented)
-					const initInput = menu.querySelector('.init-input');           // DM (or Player if uncommented)
-					const acInput = menu.querySelector('.ac-input');             // DM only
-					const sightInput = menu.querySelector('.sight-input');         // DM only
-					const lightSourceCheckboxForSave = menu.querySelector('#context-isLightSource'); // DM only (Use the ID)
-					const brightRangeInputForSave = menu.querySelector('#context-bright-range');     // DM only (Use the ID)
-					const dimRangeInputForSave = menu.querySelector('#context-dim-range');         // DM only (Use the ID)
-
-
-					// Add editable field values to statsToUpdate if they exist in the menu HTML for this role
-					// These checks implicitly handle which fields were available to the user
-					if (maxHPInput) statsToUpdate.maxHP = parseInt(maxHPInput.value, 10) || token.maxHP; // Use existing token stat as fallback if input is missing or parsing fails
-					if (hpInput) statsToUpdate.hp = parseInt(hpInput.value, 10) || token.hp;
-					if (initInput) statsToUpdate.initiative = parseInt(initInput.value, 10) || token.initiative;
-					if (acInput) statsToUpdate.ac = parseInt(acInput.value, 10) || token.ac;
-					if (sightInput) statsToUpdate.sightRadius = parseInt(sightInput.value, 10) || token.sightRadius;
-					// Use the correctly queried lightSourceCheckbox variable
-					if (lightSourceCheckboxForSave) statsToUpdate.isLightSource = lightSourceCheckboxForSave.checked;
-					if (brightRangeInputForSave) statsToUpdate.brightRange = parseInt(brightRangeInputForSave.value, 10) || token.brightRange;
-					if (dimRangeInputForSave) statsToUpdate.dimRange = parseInt(dimRangeInputForSave.value, 10) || token.dimRange;
-
-
-					// Ensure dim is always >= bright before sending (Server does this too, but belt-and-suspenders)
-					// Use default 0 if brightRange/dimRange are not defined yet
-					const finalBright = statsToUpdate.brightRange !== undefined ? statsToUpdate.brightRange : (token.brightRange || 0);
-					const finalDim = statsToUpdate.dimRange !== undefined ? statsToUpdate.dimRange : (token.dimRange || 0);
-					statsToUpdate.dimRange = Math.max(finalBright, finalDim);
-					statsToUpdate.brightRange = finalBright; // Ensure brightRange is also explicitly sent
-
-
-					// Emit the update - Server will handle permissions based on role and ownership
-					// The statsToUpdate object now contains all fields that *could* have been edited.
-					// Server side should only apply fields permitted for the user's role/ownership.
 					socket.emit('updateTokenStats', statsToUpdate);
-
 					menu.remove();
 					isContextMenuOpen = false;
 				});
 			}
 
-			// Listener for the Cancel/Close button (All roles)
 			const cancelButton = menu.querySelector('.cancel-button');
-			if (cancelButton) { // This button always exists
+			if (cancelButton) {
 				cancelButton.addEventListener('click', (e) => {
 					e.stopPropagation();
 					menu.remove();
@@ -1919,35 +1902,24 @@ document.addEventListener('DOMContentLoaded', () => {
 				});
 			}
 
-			// Prevent clicks/touches inside the menu from closing it immediately via document listeners
 			menu.addEventListener('click', (e) => e.stopPropagation());
 			menu.addEventListener('touchstart', (e) => e.stopPropagation());
 
-
-			// Add listeners to close menu when clicking/touching outside
-			// These need to be added to the document, but *after* the menu exists
 			function closeMenu(event) {
-				// Check if the event target is outside the menu.
 				if (isContextMenuOpen && menu && !menu.contains(event.target)) {
 					menu.remove();
 					isContextMenuOpen = false;
-					// Remove these specific listeners after closing
 					document.removeEventListener('click', closeMenu);
 					document.removeEventListener('touchstart', closeMenu);
 					document.removeEventListener('contextmenu', closeMenu);
 				}
 			}
 
-			// Use requestAnimationFrame to delay adding the listeners slightly
-			// This prevents the current click/touch that opened the menu from immediately closing it
 			requestAnimationFrame(() => {
 				document.addEventListener('click', closeMenu);
 				document.addEventListener('touchstart', closeMenu);
-				document.addEventListener('contextmenu', closeMenu); // Also close on right-click outside
+				document.addEventListener('contextmenu', closeMenu);
 			});
-
-			// Set the flag to true after the menu is fully shown and listeners are attached
-			// isContextMenuOpen is set to true at the very start of the function now. No need to set it here again.
 		} // End showContextMenu
 
 		function handleLongPress(clientX, clientY) {
@@ -2708,21 +2680,6 @@ document.addEventListener('DOMContentLoaded', () => {
 			}
 		});
 
-		canvas.addEventListener('contextmenu', (event) => {
-			event.preventDefault();
-			if (isLoading || currentInteractionMode !== 'interact' || isContextMenuOpen) return;
-
-			const rect = canvas.getBoundingClientRect();
-			const canvasX = (event.clientX - rect.left - panX) / scale;
-			const canvasY = (event.clientY - rect.top - panY) / scale;
-
-			const tokenInfo = getTokenAtPosition(canvasX, canvasY);
-			// Show context menu if a token is hit, regardless of ownership (limited options for others)
-			if (tokenInfo) {
-				showContextMenu(event.clientX, event.clientY, tokenInfo.index);
-			}
-		});
-
 		canvas.addEventListener('mousemove', (event) => {
 			const rect = canvas.getBoundingClientRect();
 			const canvasX = (event.clientX - rect.left - panX) / scale;
@@ -3369,56 +3326,58 @@ document.addEventListener('DOMContentLoaded', () => {
 			}
 		});
 
-		socket.on('updateTokens', (tokens) => {
-			// Merge updates to preserve local imageObj and ensure new properties
+socket.on('updateTokens', (tokens) => {
+			// Merge updates, but intelligently discard the old image object if the URL changes.
 			tokensData = tokens.map(updatedToken => {
 				const existingToken = tokensData.find(t => t.id === updatedToken.id);
-				// Use existing imageObj if available, otherwise update
-				const imageObj = existingToken ? existingToken.imageObj : null;
+				
+				let imageObjToKeep = null;
 
-					// Ensure numeric positions and default sightRadius/light properties
-					const x = Number.isFinite(updatedToken.x) ? updatedToken.x : existingToken?.x || Math.floor(currentGridWidthCells / 2);
-					const y = Number.isFinite(updatedToken.y) ? updatedToken.y : existingToken?.y || Math.floor(currentGridHeightCells / 2);
-					const sightRadius = Number.isFinite(updatedToken.sightRadius) ? updatedToken.sightRadius : (existingToken?.sightRadius || 0);
-					const isLightSource = Boolean(updatedToken.isLightSource); // Ensure boolean
-					const brightRange = Number.isFinite(updatedToken.brightRange) ? updatedToken.brightRange : (existingToken?.brightRange || 0);
-					const dimRange = Number.isFinite(updatedToken.dimRange) ? updatedToken.dimRange : (existingToken?.dimRange || 0);
+				// If we have an old token to compare against...
+				if (existingToken) {
+					// AND the image URL is the same as the old one, AND we have a loaded image...
+					if (existingToken.imageUrl === updatedToken.imageUrl && existingToken.imageObj) {
+						// ...then we can keep the pre-loaded image object to save bandwidth.
+						imageObjToKeep = existingToken.imageObj;
+					}
+					// Otherwise, imageObjToKeep remains null, forcing a reload of the new image.
+				}
 
+				// The rest of your normalization logic is good, let's keep it.
+				const x = Number.isFinite(updatedToken.x) ? updatedToken.x : existingToken?.x || 0;
+				const y = Number.isFinite(updatedToken.y) ? updatedToken.y : existingToken?.y || 0;
+                
 				return {
-					...existingToken, // Keep existing properties not explicitly updated
-					...updatedToken, // Apply updated properties
-					x, y, sightRadius, isLightSource, brightRange, dimRange, // Ensure numeric + default
-					imageObj: imageObj // Keep the loaded image object
+					...updatedToken, // Use the new data from server as the base
+					x, y, // Apply normalized coordinates
+					imageObj: imageObjToKeep // Use the intelligently determined image object
 				};
 			});
 
-			// Handle removed tokens (filter out any tokens no longer in the updated list)
+			// Handle removed tokens (this part is fine)
 			tokensData = tokensData.filter(token => tokens.some(t => t.id === token.id));
 
-			// Re-check hovered/dragged index in case the list changed
+			// Re-check indices (this part is fine)
 			if (draggedToken && !tokensData.some(t => t.id === draggedToken.id)) {
-				draggedToken = null;
-				draggedTokenIndex = -1;
+				draggedToken = null; draggedTokenIndex = -1;
 			}
-			if (hoveredTokenIndex !== -1 && !tokensData.some(t => t.id === tokensData[hoveredTokenIndex]?.id)) {
-					hoveredTokenIndex = -1;
+			if (hoveredTokenIndex !== -1 && !tokensData[hoveredTokenIndex]) {
+				hoveredTokenIndex = -1;
 			}
-			// NEW: If the selected token was removed, deselect it.
 			if (selectedTokenIndex !== -1 && !tokensData[selectedTokenIndex]) {
 				selectedTokenIndex = -1;
 			}
 
-
-			// console.log('Updated tokens:', tokensData.map(t => ({ id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, sight: t.sightRadius, light: t.isLightSource ? `${t.brightRange}/${t.dimRange}` : 'No' }))); // Less spammy token log
-			// Preload images for any newly added tokens that weren't merged
+			// NOW this loop will correctly find tokens with a new URL,
+			// because their imageObj was set to null during the merge.
 			tokensData.forEach(token => {
-					if (!token.imageObj && token.imageUrl) {
-						preloadTokenImage(token);
-					}
+				if (!token.imageObj && token.imageUrl) {
+					preloadTokenImage(token);
+				}
 			});
 
-			maskDirty = true; // Tokens moved or stats/light updated, need mask update
-			drawGrid(); // Redraw the grid
+			maskDirty = true;
+			drawGrid();
 		});
 
 		// Server emits updateWalls. Client receives and updates local walls.
@@ -3516,10 +3475,21 @@ document.addEventListener('DOMContentLoaded', () => {
 		socket.on('clients', (clientUsernames) => { // Server now sends usernames
 			// console.log('Connected clients:', clientUsernames); // Keep console cleaner
 		});
-
+	canvas.addEventListener('contextmenu', (event) => {
+			event.preventDefault(); // Always prevent default right-click menu
+			
+			// --- UNIFIED CONTEXT MENU LOGIC ---
+			// We will just trigger the same logic as a long press.
+			// This keeps behavior consistent and uses your powerful, dynamic menu builder.
+			if (isLoading || isContextMenuOpen || currentInteractionMode !== 'interact') return;
+			
+			// Call the same handler that a long-press touch event would.
+			handleLongPress(event.clientX, event.clientY);
+		});	
 
 	} // End initializeSocket
 
 	// Start the process by determining the server URL and then initializing the socket
-	determineServerUrl();
+	determineServerUrl();	
+
 }); // End DOMContentLoaded listener

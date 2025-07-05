@@ -657,58 +657,64 @@ io.on('connection', (socket) => {
             console.warn(`Client ${socket.id} attempted unauthorized map visibility toggle.`);
         }
     });
+	
+	// --- NEW: Handler for updating token properties (stats, name, image, etc.) ---
+	socket.on('updateTokenStats', ({ tokenId, hp, initiative, ac, maxHP, rotation, sightRadius, isLightSource, brightRange, dimRange, name, imageUrl }) => {
+		const role = roleFromSocket(socket);
+		const username = getUsernameFromSocket(socket);
+		const token = gameState.tokens.find(t => t.id === tokenId);
 
-    // --- Modified updateTokenStats handler ---
-    // Now receives rotation, sightRadius, isLightSource, brightRange, dimRange from the context menu save
-    socket.on('updateTokenStats', ({ tokenId, hp, initiative, ac, maxHP, rotation, sightRadius, isLightSource, brightRange, dimRange }) => {
-        const role = roleFromSocket(socket);
-        const username = getUsernameFromSocket(socket);
-        const token = gameState.tokens.find(t => t.id === tokenId);
+		if (token && (role === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username))) {
+			let changed = false;
 
-        // Check if token exists AND if user is DM OR owns/parents the token
-        if (token && (role === 'dm' || token.owner === username || (token.isMinion && token.parentOwner === username))) {
-            let changed = false;
+			// --- DM-ONLY PROPERTIES ---
+			if (role === 'dm') {
+				if (maxHP !== undefined) { const numMaxHp = Number(maxHP); if (Number.isFinite(numMaxHp) && numMaxHp >= 0 && token.maxHP !== numMaxHp) { token.maxHP = numMaxHp; changed = true; } }
+				if (sightRadius !== undefined) { const numSight = Number(sightRadius); if (Number.isFinite(numSight) && numSight >= 0 && token.sightRadius !== numSight) { token.sightRadius = numSight; changed = true; } }
+				if (isLightSource !== undefined) { const boolLight = Boolean(isLightSource); if (token.isLightSource !== boolLight) { token.isLightSource = boolLight; changed = true; } }
+				if (brightRange !== undefined) { const numBright = Number(brightRange); if (Number.isFinite(numBright) && numBright >= 0 && token.brightRange !== numBright) { token.brightRange = numBright; changed = true; } }
+				if (dimRange !== undefined) { const numDim = Number(dimRange); if (Number.isFinite(numDim) && numDim >= 0 && token.dimRange !== numDim) { token.dimRange = numDim; changed = true; } }
+				
+				// Ensure dim is always >= bright
+				if (token.dimRange < token.brightRange) {
+					token.dimRange = token.brightRange;
+					changed = true;
+				}
 
-            // Update stats if provided and are valid numbers (DM or Owner depending on context menu fields)
-            // Client context menu restricts which fields are sent by player owners, server trusts this for simplicity
-            if (hp !== undefined) { const numHp = Number(hp); if (Number.isFinite(numHp) && token.hp !== numHp) { token.hp = numHp; changed = true; }}
-            if (initiative !== undefined) { const numInit = Number(initiative); if (Number.isFinite(numInit) && token.initiative !== numInit) { token.initiative = numInit; changed = true; }}
-            if (ac !== undefined) { const numAc = Number(ac); if (Number.isFinite(numAc) && token.ac !== numAc) { token.ac = numAc; changed = true; }}
-            // Max HP, Sight Radius, Light Source properties are DM-only fields in the context menu
-            if (role === 'dm') {
-                 if (maxHP !== undefined) { const numMaxHp = Number(maxHP); if (Number.isFinite(numMaxHp) && numMaxHp >= 0 && token.maxHP !== numMaxHp) { token.maxHP = numMaxHp; changed = true; }}
-                 if (sightRadius !== undefined) { const numSight = Number(sightRadius); if (Number.isFinite(numSight) && numSight >= 0 && token.sightRadius !== numSight) { token.sightRadius = numSight; changed = true; }}
-                 if (isLightSource !== undefined) { const boolLight = Boolean(isLightSource); if (token.isLightSource !== boolLight) { token.isLightSource = boolLight; changed = true; }}
-                 if (brightRange !== undefined) { const numBright = Number(brightRange); if (Number.isFinite(numBright) && numBright >= 0 && token.brightRange !== numBright) { token.brightRange = numBright; changed = true; }}
-                 if (dimRange !== undefined) { const numDim = Number(dimRange); if (Number.isFinite(numDim) && numDim >= 0 && token.dimRange !== numDim) { token.dimRange = numDim; changed = true; }}
-                 // Ensure dim is always >= bright
-                 if (token.dimRange < token.brightRange) {
-                     token.dimRange = token.brightRange;
-                     changed = true; // This change also needs to be reflected
-                 }
-            }
+				// --- ADDED: Handle name and imageUrl updates (DM-only) ---
+				if (name !== undefined && typeof name === 'string' && token.name !== name.trim()) {
+					token.name = name.trim();
+					changed = true;
+					console.log(`DM "${username}" renamed token ${tokenId} to "${token.name}"`);
+				}
+				if (imageUrl !== undefined && typeof imageUrl === 'string' && token.imageUrl !== imageUrl.trim()) {
+					token.imageUrl = imageUrl.trim();
+					changed = true;
+					console.log(`DM "${username}" changed image for token ${tokenId}`);
+				}
+				// --- END ADDED ---
+			}
 
-            // Rotation can be updated by DM or player owner via context menu
-            // The client sends rotation with both moveToken and updateTokenStats
-            // Ensure we handle rotation updates here too if sent
-             if (rotation !== undefined) {
-                 const numRotation = Number(rotation) % 360;
-                 if (Number.isFinite(numRotation) && token.rotation !== numRotation) { token.rotation = numRotation; changed = true; }
-             }
+			// --- Properties updatable by DM or Owner ---
+			if (hp !== undefined) { const numHp = Number(hp); if (Number.isFinite(numHp) && token.hp !== numHp) { token.hp = numHp; changed = true; } }
+			if (initiative !== undefined) { const numInit = Number(initiative); if (Number.isFinite(numInit) && token.initiative !== numInit) { token.initiative = numInit; changed = true; } }
+			if (ac !== undefined) { const numAc = Number(ac); if (Number.isFinite(numAc) && token.ac !== numAc) { token.ac = numAc; changed = true; } }
+			if (rotation !== undefined) {
+				const numRotation = Number(rotation) % 360;
+				if (Number.isFinite(numRotation) && token.rotation !== numRotation) { token.rotation = numRotation; changed = true; }
+			}
 
-
-            if (changed) {
-                 console.log(`Token stats updated: "${token.name}" (ID: ${tokenId}) by "${username}" (${role})`);
-                 io.emit('updateTokens', gameState.tokens); // Broadcast the updated list
-                 if (role === 'dm') { // Only autosave if DM made changes
-                     saveStateDebounced();
-                 }
-            }
-        } else {
-             // Optional: Log unauthorized stat update attempts
-             // console.warn(`Client ${socket.id} attempted unauthorized stat update of token ${tokenId}.`);
-        }
-    });
+			if (changed) {
+				console.log(`Token properties updated: "${token.name}" (ID: ${tokenId}) by "${username}" (${role})`);
+				io.emit('updateTokens', gameState.tokens);
+				// Auto-save any changes
+				saveStateDebounced();
+			}
+		} else {
+			socket.emit('error', 'You do not have permission to edit this token.');
+			console.warn(`Unauthorized attempt to edit token ${tokenId} by user ${username}`);
+		}
+	});
 	
 	// +++++++++++++ NEW DICE ROLLING HANDLER +++++++++++++
     socket.on('rollDice', (data) => {
