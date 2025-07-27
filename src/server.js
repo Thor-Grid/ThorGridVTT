@@ -108,10 +108,15 @@ let gameState = {
     walls: [],
     backgroundImageUrl: '',
     gridSize: { width: 40, height: 30 },
-    viewState: { scale: 1, panX: 0, panY: 0 }, // Store view state here
-    isGridVisible: true, // Controls drawing grid lines
-	isMapFullyVisible: false, // NEW: State for DM's "All Visible Map" toggle
-    // Removed 'players' from here - active players are managed in memory
+    viewState: { scale: 1, panX: 0, panY: 0 },
+    isGridVisible: true,
+    isMapFullyVisible: false,
+    // +++ ADD THIS SECTION +++
+    initiativeTracker: {
+        tokenOrder: [], // Array of { tokenId, initiative } sorted
+        currentIndex: -1, // Index of the token whose turn it is
+        roundCount: 0
+    },
 };
 
 // In-memory tracking of connected clients
@@ -463,21 +468,50 @@ io.on('connection', (socket) => {
     });
 
     socket.on('removeToken', (tokenId) => {
-        if (roleFromSocket(socket) === 'dm') {
-            const initialTokenCount = gameState.tokens.length;
-            gameState.tokens = gameState.tokens.filter(t => t.id !== tokenId);
-            if (gameState.tokens.length < initialTokenCount) {
-                console.log(`Token removed: ${tokenId} by DM "${getUsernameFromSocket(socket)}"`);
-                io.emit('updateTokens', gameState.tokens); // Broadcast the updated list
-                saveStateDebounced(); // Auto-save state after change
-            } else {
-                 console.warn(`DM "${getUsernameFromSocket(socket)}" attempted to remove non-existent token ${tokenId}.`);
-            }
-        } else {
-             socket.emit('error', 'Only the DM can remove tokens.');
-             console.warn(`Client ${socket.id} attempted unauthorized token removal.`);
-        }
-    });
+		if (roleFromSocket(socket) === 'dm') {
+			const initialTokenCount = gameState.tokens.length;
+			gameState.tokens = gameState.tokens.filter(t => t.id !== tokenId);
+			if (gameState.tokens.length < initialTokenCount) {
+				console.log(`Token removed: ${tokenId} by DM "${getUsernameFromSocket(socket)}"`);
+				io.emit('updateTokens', gameState.tokens); // Broadcast the updated list
+
+				// +++ START OF NEW LOGIC +++
+				// If combat is active, remove the token from the turn order.
+				const trackerIndex = gameState.initiativeTracker.tokenOrder.findIndex(t => t.tokenId === tokenId);
+				if (trackerIndex > -1) {
+					gameState.initiativeTracker.tokenOrder.splice(trackerIndex, 1);
+					
+					// If the removed token's turn was active, we just stay on the same index,
+					// which will now point to the *next* person in the list.
+					// However, if we removed someone *before* the current turn, we need to shift the index back.
+					if (trackerIndex < gameState.initiativeTracker.currentIndex) {
+						gameState.initiativeTracker.currentIndex--;
+					}
+					
+					// If the list is now empty, end combat.
+					if (gameState.initiativeTracker.tokenOrder.length === 0) {
+						gameState.initiativeTracker.currentIndex = -1;
+						gameState.initiativeTracker.roundCount = 0;
+					} 
+					// If the index is now out of bounds (e.g. last person was removed), loop to the start.
+					else if (gameState.initiativeTracker.currentIndex >= gameState.initiativeTracker.tokenOrder.length) {
+						gameState.initiativeTracker.currentIndex = 0;
+						gameState.initiativeTracker.roundCount++;
+					}
+
+					io.emit('updateInitiativeTracker', gameState.initiativeTracker);
+				}
+				// +++ END OF NEW LOGIC +++
+
+				saveStateDebounced(); // Auto-save state after change
+			} else {
+				 console.warn(`DM "${getUsernameFromSocket(socket)}" attempted to remove non-existent token ${tokenId}.`);
+			}
+		} else {
+			 socket.emit('error', 'Only the DM can remove tokens.');
+			 console.warn(`Client ${socket.id} attempted unauthorized token removal.`);
+		}
+	});
 
     socket.on('updateWalls', (newWalls) => {
         if (roleFromSocket(socket) === 'dm') {
@@ -879,6 +913,66 @@ io.on('connection', (socket) => {
 		});
 		
 		saveStateDebounced();
+	});
+	
+	socket.on('startInitiative', () => {
+		if (roleFromSocket(socket) === 'dm') {
+			const combatants = gameState.tokens
+			.filter(token => token.initiative > 0)
+			.map(token => ({
+				tokenId: token.id,
+				initiative: token.initiative || 0,
+			}));
+
+			// Sort by initiative, highest first
+			combatants.sort((a, b) => b.initiative - a.initiative);
+
+			gameState.initiativeTracker = {
+				tokenOrder: combatants,
+				currentIndex: combatants.length > 0 ? 0 : -1,
+				roundCount: combatants.length > 0 ? 1 : 0,
+			};
+
+			console.log(`Initiative started by DM "${getUsernameFromSocket(socket)}"`);
+			io.emit('updateInitiativeTracker', gameState.initiativeTracker);
+			saveStateDebounced();
+		} else {
+			socket.emit('error', 'Only the DM can start initiative.');
+		}
+	});
+
+	socket.on('nextTurn', () => {
+		if (roleFromSocket(socket) === 'dm') {
+			const tracker = gameState.initiativeTracker;
+			if (tracker.tokenOrder.length > 0) {
+				tracker.currentIndex++;
+				// If we've gone past the last person, loop back to the start and increase the round count.
+				if (tracker.currentIndex >= tracker.tokenOrder.length) {
+					tracker.currentIndex = 0;
+					tracker.roundCount++;
+				}
+				io.emit('updateInitiativeTracker', tracker);
+				saveStateDebounced();
+			}
+		} else {
+			socket.emit('error', 'Only the DM can advance the turn.');
+		}
+	});
+
+	socket.on('endInitiative', () => {
+		if (roleFromSocket(socket) === 'dm') {
+			// Reset the tracker state to its default "off" state.
+			gameState.initiativeTracker = {
+				tokenOrder: [],
+				currentIndex: -1,
+				roundCount: 0,
+			};
+			console.log(`Initiative ended by DM "${getUsernameFromSocket(socket)}"`);
+			io.emit('updateInitiativeTracker', gameState.initiativeTracker);
+			saveStateDebounced();
+		} else {
+			socket.emit('error', 'Only the DM can end initiative.');
+		}
 	});
 	
 	socket.on('clearBoard', () => {

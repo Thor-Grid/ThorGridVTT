@@ -331,6 +331,8 @@ document.addEventListener('DOMContentLoaded', () => {
 		// Game state and UI logic
 		let pendingWallChanges = {};
 		let tokensData = [];
+		let initiativeTracker = { tokenOrder: [], currentIndex: -1, roundCount: 0 };
+		let areLabelsVisible = true; // Default to showing all labels
 		let backgroundImage = null;
 		let backgroundImageUrl = '';
 		let scale = 1;
@@ -473,6 +475,48 @@ document.addEventListener('DOMContentLoaded', () => {
 			oscillator.stop(now + duration);
 		}
 
+		function renderInitiativeTracker() {
+			const trackerList = document.getElementById('initiative-tracker-list');
+			const trackerHeader = document.getElementById('initiative-tracker-header');
+			if (!trackerList || !trackerHeader) return;
+
+			trackerList.innerHTML = ''; // Clear previous list
+
+			if (initiativeTracker.currentIndex > -1) {
+				trackerHeader.textContent = `Round ${initiativeTracker.roundCount}`;
+			} else {
+				trackerHeader.textContent = 'Combat Ended';
+			}
+
+			if (initiativeTracker.tokenOrder.length === 0) {
+				const li = document.createElement('li');
+				li.textContent = 'No tokens in order.';
+				li.style.textAlign = 'center';
+				li.style.fontStyle = 'italic';
+				trackerList.appendChild(li);
+			} else {
+				initiativeTracker.tokenOrder.forEach((entry, index) => {
+					const token = tokensData.find(t => t.id === entry.tokenId);
+					if (token) {
+						const li = document.createElement('li');
+						li.className = 'initiative-item';
+						if (index === initiativeTracker.currentIndex) {
+							li.classList.add('active-turn');
+						}
+						
+						const nameSpan = document.createElement('span');
+						nameSpan.textContent = token.name;
+						
+						const initSpan = document.createElement('span');
+						initSpan.textContent = `(${entry.initiative})`;
+
+						li.appendChild(nameSpan);
+						li.appendChild(initSpan);
+						trackerList.appendChild(li);
+					}
+				});
+			}
+		}
 
 		function showNotification(message, isError = false) {
 			notificationDiv.textContent = message;
@@ -1031,6 +1075,7 @@ document.addEventListener('DOMContentLoaded', () => {
 					// Decide if the token should be drawn for this client
 					let shouldDrawToken = false;
 					const isOwner = tokenData.owner === username || (tokenData.isMinion && tokenData.parentOwner === username);
+						const isActiveTurn = initiativeTracker.currentIndex > -1 && initiativeTracker.tokenOrder[initiativeTracker.currentIndex]?.tokenId === tokenData.id;
 
 					if (currentRole === 'dm') {
 						shouldDrawToken = true; // DM sees all tokens
@@ -1120,6 +1165,26 @@ document.addEventListener('DOMContentLoaded', () => {
 									else { const radius = width * 0.15; ctx.beginPath(); ctx.moveTo(drawX + radius, drawY); ctx.lineTo(drawX + width - radius, drawY); ctx.quadraticCurveTo(drawX + width, drawY, drawX + width, drawY + radius); ctx.lineTo(drawX + width, drawY + height - radius); ctx.quadraticCurveTo(drawX + width, drawY + height, drawX + width - radius, drawY + height); ctx.lineTo(drawX + radius, drawY + height); ctx.quadraticCurveTo(drawX, drawY + height, drawX, drawY + height - radius); ctx.lineTo(drawX, drawY + radius); ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY); ctx.closePath(); ctx.fillStyle = `rgba(255, 0, 0, ${redTint * 0.5})`; ctx.fill(); }
 									ctx.globalCompositeOperation = 'source-over';
 								}
+						}
+						
+						if (isActiveTurn) {
+							ctx.strokeStyle = '#FFD700'; // A gold/yellow color
+							ctx.lineWidth = 4 / scale;   // Make it nice and thick
+							
+							// --- Draw the highlight BEHIND the token image ---
+							ctx.globalCompositeOperation = 'destination-over'; 
+
+							if (tokenSize === 1) { 
+								ctx.beginPath(); 
+								ctx.arc(0, 0, width / 2 + (2 / scale), 0, Math.PI * 2); 
+								ctx.stroke(); 
+							} else { 
+								const outlineOffset = 4 / scale;
+								ctx.strokeRect(drawX - outlineOffset / 2, drawY - outlineOffset / 2, width + outlineOffset, height + outlineOffset);
+							}
+							
+							// Reset composite mode so everything else draws normally
+							ctx.globalCompositeOperation = 'source-over'; 
 						}
 
 						// --- DRAW SELECTION OUTLINE (ON TOP of everything) ---
@@ -1416,6 +1481,9 @@ document.addEventListener('DOMContentLoaded', () => {
 					const originalIndex = tokensData.findIndex(t => t.id === tokenData.id);
 					// MODIFIED: "Important" now includes the persistently selected token
 					const isImportant = originalIndex === hoveredTokenIndex || originalIndex === draggedTokenIndex || originalIndex === selectedTokenIndex;
+					if (!areLabelsVisible && !isImportant) {
+						shouldDisplayName = false;
+					}
 					const priority = isImportant ? 2 : 0; // Priority 2 for important, 0 for others
 
 
@@ -1441,7 +1509,7 @@ document.addEventListener('DOMContentLoaded', () => {
 					}
 
 					// If allowed to show name (either by rule or passing overlap check)
-					if (canShow) {
+					if (shouldDisplayName && canShow) {
 						// Add to list with calculated priority
 						visibleNames.push({ tokenData, screenX: screenX_center, screenY_top: screenY_top, priority: priority });
 					}
@@ -2390,6 +2458,30 @@ document.addEventListener('DOMContentLoaded', () => {
 			panY = (canvas.height - currentGridHeightCells * gridSize * scale) / 2;
 			drawGrid();
 		});
+		
+		const toggleLabelsButton = document.getElementById('toggle-labels-button');
+		if (toggleLabelsButton) {
+			toggleLabelsButton.addEventListener('click', () => {
+				// Flip the state
+				areLabelsVisible = !areLabelsVisible;
+
+				// Update button text and style for visual feedback
+				toggleLabelsButton.textContent = areLabelsVisible ? 'Hide Labels' : 'Show Labels';
+				toggleLabelsButton.classList.toggle('feature-active', !areLabelsVisible);
+
+				// Immediately update the display
+				updateTokenNames();
+			});
+		}
+		
+		const showGuideButton = document.getElementById('show-guide-button');
+		if (showGuideButton) {
+			showGuideButton.addEventListener('click', () => {
+				// This opens the PDF file from the public folder in a new tab.
+				// It works for both browsers and the Electron app.
+				window.open('/user-guide.pdf', '_blank');
+			});
+		}
 
 		backgroundForm.addEventListener('submit', (event) => event.preventDefault()); // Prevent default form submit
 
@@ -2798,238 +2890,132 @@ document.addEventListener('DOMContentLoaded', () => {
 		});
 
 		canvas.addEventListener('touchstart', (event) => {
-			event.preventDefault();
-			if (isLoading || isContextMenuOpen) { // Prevent interaction while loading or menu is open
-					if (longPressTimeout) clearTimeout(longPressTimeout); // Clear any accidental timeout
-					isLongPressing = false;
-					return;
-			}
+				event.preventDefault();
+				if (isLoading || isContextMenuOpen) return;
 
-			if (event.touches.length === 1) {
+				// For pinch-to-zoom
+				if (event.touches.length >= 2) {
+					resetInteraction(); // Stop any single-finger action
+					const touch1 = event.touches[0];
+					const touch2 = event.touches[1];
+					pinchStartDistance = Math.hypot(
+						touch1.clientX - touch2.clientX,
+						touch1.clientY - touch2.clientY
+					);
+					pinchStartScale = scale;
+					return; // Done with this event
+				}
+				
+				// For single touch (drag, pan, or long-press)
 				const touch = event.touches[0];
-				handleInteractionStart(touch.clientX, touch.clientY);
 				longPressStartX = touch.clientX;
 				longPressStartY = touch.clientY;
-				// Start timer for long press context menu
-				// Only start if no token was immediately selected for drag (check `draggedToken`)
-				// This avoids showing the context menu immediately on drag start.
-				if (!draggedToken && currentInteractionMode === 'interact') {
-					longPressTimeout = setTimeout(() => {
-						isLongPressing = true;
-						// Check if finger hasn't moved too much - This check is better in touchmove/touchend
-						// Let the timeout just set the flag and call the menu handler
-						handleLongPress(longPressStartX, longPressStartY);
+				isLongPressing = false;
+				
+				// Start a timer to detect a long press.
+				// If the user moves or lifts their finger, we'll cancel this timer.
+				longPressTimeout = setTimeout(() => {
+					isLongPressing = true;
+					handleLongPress(longPressStartX, longPressStartY);
+				}, 500); // 500ms for long press
+			});
 
-					}, 500); // 500ms for long press
-				} else {
-						// If a token was selected for drag immediately, it's not a long press intent
-						if (longPressTimeout) clearTimeout(longPressTimeout);
-						isLongPressing = false;
-				}
-			} else if (event.touches.length === 2) {
-				// Handle pinch-to-zoom
-				resetInteraction(); // Stop any dragging/drawing first
-				if (longPressTimeout) clearTimeout(longPressTimeout);
-				isLongPressing = false; // Cancel long press
-
-				const touch1 = event.touches[0];
-				const touch2 = event.touches[1];
-				pinchStartDistance = Math.hypot(
-					touch1.clientX - touch2.clientX,
-					touch1.clientY - touch2.clientY
-				);
-				pinchStartScale = scale;
-				pinchStartCenterX = (touch1.clientX + touch2.clientX) / 2;
-				pinchStartCenterY = (touch1.clientY + touch2.clientY) / 2;
-			} else {
-					// More than 2 touches, ignore or reset
-					resetInteraction();
-					if (longPressTimeout) clearTimeout(longPressTimeout);
-					isLongPressing = false;
-			}
-		});
-
-						canvas.addEventListener('touchmove', (event) => {
+		canvas.addEventListener('touchmove', (event) => {
 			event.preventDefault();
 			if (isLoading || isContextMenuOpen) return;
 
-			// If finger moves significantly during potential long press, cancel it
-			if (longPressTimeout && event.touches.length === 1) {
-					const touch = event.touches[0];
-					const dx = touch.clientX - longPressStartX;
-					const dy = event.changedTouches[0].clientY - longPressStartY;
-					const distance = Math.sqrt(dx*dx + dy*dy);
-					if (distance > 10) {
-						clearTimeout(longPressTimeout);
-						longPressTimeout = null;
-						isLongPressing = false;
-						// If dragging hadn't started yet but we moved, re-evaluate interaction start at the original touch position
-						// to see if a token was under the initial touch and start dragging if so.
-						if (!draggedToken && !isPanning && !isDrawing) {
-							const rect = canvas.getBoundingClientRect();
-							handleInteractionStart(longPressStartX, longPressStartY);
-						}
-					}
-			}
-
-			const rect = canvas.getBoundingClientRect();
-			// Check for a single touch (used for drag, pan, or draw)
-			if (event.touches.length === 1) {
-				const touch = event.touches[0];
-				const canvasX = (touch.clientX - rect.left - panX) / scale;
-				const canvasY = (touch.clientY - rect.top - panY) / scale;
-
-				// --- Handle token dragging ---
-				if (draggedToken) {
-					// Calculate the potential new grid position based on touch position and initial offset
-					const tokenSize = draggedToken.size || 1;
-					const newX = Math.floor((canvasX - offsetX) / gridSize);
-					const newY = Math.floor((canvasY - offsetY) / gridSize);
-					const maxX = currentGridWidthCells - tokenSize;
-					const maxY = currentGridHeightCells - tokenSize;
-
-					// Clamp the *intended* final position to grid bounds FIRST
-					const clampedX = Math.max(0, Math.min(newX, maxX));
-					const clampedY = Math.max(0, Math.min(newY, maxY));
-
-					// --- Implement Single-Step Collision Check ---
-					// Only perform this logic if the intended clamped position is DIFFERENT from the token's current cell
-					if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
-
-						const currentX = draggedToken.x;
-						const currentY = draggedToken.y;
-
-						// Calculate the proposed next step: move one cell towards the clamped destination
-						// Math.sign gives -1, 0, or 1
-						let targetX = currentX + Math.sign(clampedX - currentX);
-						let targetY = currentY + Math.sign(clampedY - currentY);
-
-						// Re-clamp this single step to ensure it's still within bounds (should be, but safe)
-						targetX = Math.max(0, Math.min(targetX, maxX));
-						targetY = Math.max(0, Math.min(targetY, maxY));
-
-						// Now check for collision at this *single step* target cell
-						if (!isCollision(targetX, targetY, draggedToken, walls, currentGridWidthCells, currentGridHeightCells)) {
-							// If there is NO collision at the single step target:
-							// Update the token's local position to this new single step cell
-							draggedToken.x = targetX;
-							draggedToken.y = targetY;
-							// console.log(`Touch moving token ${draggedToken.name} to x: ${draggedToken.x}, y: ${draggedToken.y}`); // COMMENTED OUT
-							// Emit the updated position to the server (the server will also validate)
-							socket.emit('moveToken', {
-								tokenId: draggedToken.id,
-								x: draggedToken.x,
-								y: draggedToken.y,
-								rotation: draggedToken.rotation
-							});
-							maskDirty = true; // Token moved, need to recalculate mask (for FoW)
-							drawGrid(); // Redraw immediately for smooth drag feedback
-						} else {
-							// If there IS a collision at the single step target:
-							// The token's position is NOT updated. It stays in its last valid cell.
-							// This prevents moving into the wall, even if the touch jumps over it.
-							console.log(`Collision detected for ${draggedToken.name} at [${targetX}, ${targetY}]. Blocking move.`);
-							// Optional: Add visual feedback here (e.g., temporary red tint)
-						}
-					}
-					// If the intended clamped position is the same as current, do nothing (token didn't move cells).
-
-				// --- Handle panning ---
-				} else if (isPanning && !isLongPressing) { // Handle panning if no token is dragged and not a potential long press
-					panX += touch.clientX - startX;
-					panY += touch.clientY - startY;
-					startX = touch.clientX;
-					startY = touch.clientY;
-					drawGrid();
-
-				// --- Handle wall drawing/erasing ---
-				} else if (isDrawing && currentRole === 'dm' && (currentInteractionMode === 'draw' || currentInteractionMode === 'erase')) { // Only draw/erase if in correct mode and DM
-					const gridX = Math.floor(canvasX / gridSize);
-					const gridY = Math.floor(canvasY / gridSize);
-					// Check if the touch is within grid bounds
-					if (gridX >= 0 && gridX < currentGridWidthCells && gridY >= 0 && gridY < currentGridHeightCells) {
-						// Ensure wall array is initialized for the row if it doesn't exist
-						if (!walls[gridY]) walls[gridY] = Array(currentGridWidthCells).fill(0);
-						// Determine the new state (1 for draw, 0 for erase)
-						const newState = currentInteractionMode === 'draw' ? 1 : 0;
-						// Only make a change if the wall state is different at this cell
-						if (walls[gridY][gridX] !== newState) {
-							// Record the change (for pending emit on touchend)
-							pendingWallChanges[`${gridY}_${gridX}`] = newState;
-							// Update the local wall state immediately for visual feedback
-							walls[gridY][gridX] = newState;
-							maskDirty = true; // Wall changed, need mask update for FoW
-							drawGrid(); // Redraw immediately
-						}
-					}
-				}
-			// --- Handle Pinch-to-Zoom ---
-			} else if (event.touches.length === 2) { // Handle two touches for pinch-to-zoom
-				// Ensure any pending single-touch interactions are reset
-				resetInteraction();
-				if (longPressTimeout) clearTimeout(longPressTimeout);
-				isLongPressing = false;
-
-				// Pinch-to-zoom logic
+			// Handle pinch-to-zoom
+			if (event.touches.length >= 2) {
+				if (longPressTimeout) clearTimeout(longPressTimeout); // Cancel long press if it was pending
 				const touch1 = event.touches[0];
 				const touch2 = event.touches[1];
-				// Calculate distance between touches
-				const newDistance = Math.hypot(
-					touch1.clientX - touch2.clientX,
-					touch1.clientY - touch2.clientY
-				);
-				// Calculate the center point of the pinch
-				const newCenterX = (touch1.clientX + touch2.clientX) / 2;
-				const newCenterY = (touch1.clientY + touch2.clientY) / 2;
-
-				// Calculate the zoom factor based on the change in pinch distance
+				const newDistance = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
 				const scaleFactor = newDistance / pinchStartDistance;
-				// Apply the zoom factor to the previous scale, clamping between min/max
+				
 				const newScale = pinchStartScale * scaleFactor;
-				scale = Math.max(0.2, Math.min(newScale, 5)); // Clamp scale between 0.2x and 5x
+				scale = Math.max(0.2, Math.min(newScale, 5));
+				
+				// Re-pan based on zoom
+				const rect = canvas.getBoundingClientRect();
+				const mouseX = (touch1.clientX + touch2.clientX) / 2 - rect.left;
+				const mouseY = (touch1.clientY + touch2.clientY) / 2 - rect.top;
+				const canvasX = (mouseX - panX) / (pinchStartScale * scaleFactor);
+				const canvasY = (mouseY - panY) / (pinchStartScale * scaleFactor);
+				
+				panX = mouseX - canvasX * scale;
+				panY = mouseY - canvasY * scale;
 
-				// Adjust pan to keep the pinch center point (in world coordinates) stable on the screen
-				const rect = canvas.getBoundingClientRect(); // Recalculate rect just in case (might change during pinch)
-				// Calculate the canvas coordinates of the initial pinch center in the *old* scale
-				const canvasCenterX = (pinchStartCenterX - rect.left - panX) / pinchStartScale;
-				const canvasCenterY = (pinchStartCenterY - rect.top - panY) / pinchStartScale;
-				// Calculate the new pan offset needed to keep that canvas point under the new pinch center
-				panX = newCenterX - rect.left - canvasCenterX * scale;
-				panY = newCenterY - rect.top - canvasCenterY * scale;
-
-				// Update pinch start values for the next touchmove event
-				pinchStartDistance = newDistance;
-				pinchStartScale = scale;
-				pinchStartCenterX = newCenterX;
-				pinchStartCenterY = newCenterY;
-
-				drawGrid(); // Redraw after zoom/pan
+				drawGrid();
+				return;
 			}
-			// If more than 2 touches, we ignore them (handled by initial check in touchstart)
-		}); // End of touchmove listener
+
+			// Handle single-touch movement (drag or pan)
+			const touch = event.touches[0];
+			const dx = touch.clientX - longPressStartX;
+			const dy = touch.clientY - longPressStartY;
+			const distance = Math.sqrt(dx * dx + dy * dy);
+
+			// If a drag/pan hasn't started yet, and we move enough, start one.
+			if (!draggedToken && !isPanning && distance > 10) {
+				// The movement cancels any pending long press
+				if (longPressTimeout) clearTimeout(longPressTimeout);
+
+				// Now, officially start the drag or pan
+				handleInteractionStart(longPressStartX, longPressStartY);
+			}
+
+			// If a drag is in progress, update its position
+			if (draggedToken) {
+				const rect = canvas.getBoundingClientRect();
+				const canvasX = (touch.clientX - rect.left - panX) / scale;
+				const canvasY = (touch.clientY - rect.top - panY) / scale;
+				const tokenSize = draggedToken.size || 1;
+				const newX = Math.floor((canvasX - offsetX) / gridSize);
+				const newY = Math.floor((canvasY - offsetY) / gridSize);
+				const maxX = currentGridWidthCells - tokenSize;
+				const maxY = currentGridHeightCells - tokenSize;
+				const clampedX = Math.max(0, Math.min(newX, maxX));
+				const clampedY = Math.max(0, Math.min(newY, maxY));
+
+				if (draggedToken.x !== clampedX || draggedToken.y !== clampedY) {
+					let targetX = draggedToken.x + Math.sign(clampedX - draggedToken.x);
+					let targetY = draggedToken.y + Math.sign(clampedY - draggedToken.y);
+					targetX = Math.max(0, Math.min(targetX, maxX));
+					targetY = Math.max(0, Math.min(targetY, maxY));
+					if (!isCollision(targetX, targetY, draggedToken, walls, currentGridWidthCells, currentGridHeightCells)) {
+						draggedToken.x = targetX;
+						draggedToken.y = targetY;
+						socket.emit('moveToken', { tokenId: draggedToken.id, x: draggedToken.x, y: draggedToken.y, rotation: draggedToken.rotation });
+						maskDirty = true;
+						drawGrid();
+					}
+				}
+			} 
+			// If a pan is in progress, update its position
+			else if (isPanning) {
+				panX += touch.clientX - startX;
+				panY += touch.clientY - startY;
+				startX = touch.clientX;
+				startY = touch.clientY;
+				drawGrid();
+			}
+		});
 
 		canvas.addEventListener('touchend', (event) => {
-				// If a long press timer was active, clear it and check if it was a tap vs long press
+			// If a long press was pending, clear it. This means it was just a tap.
 			if (longPressTimeout) {
-					clearTimeout(longPressTimeout);
-					longPressTimeout = null;
-					// If it was a short tap (not a drag or long press), handle interaction start/click
-					// Check if touch ended *without* significant movement and was not flagged as long press
-					const dx = event.changedTouches[0].clientX - longPressStartX;
-					const dy = event.changedTouches[0].clientY - longPressStartY;
-					const distance = Math.sqrt(dx*dx + dy*dy);
-					// If interaction didn't turn into a drag/pan AND distance is small, treat as a click/tap
-					if (!draggedToken && !isPanning && !isDrawing && distance < 10 && !isLongPressing) {
-					// Simulate a click interaction at the start position
-						handleInteractionStart(longPressStartX, longPressStartY); // This will either start drag (if it wasn't picked up before) or do nothing if no token/pan/draw
-						resetInteraction(); // Then reset immediately as it was just a tap
-					}
-					isLongPressing = false; // Reset flag
+				clearTimeout(longPressTimeout);
 			}
 
-			// Reset general interaction state *only* if all touches are lifted
+			// If no drag, pan, or long press occurred, it was a tap.
+			// A tap is just a quick select/deselect.
+			if (!draggedToken && !isPanning && !isLongPressing) {
+				handleInteractionStart(longPressStartX, longPressStartY); // Process the "click"
+			}
+
+			// Reset all interaction states when the last finger is lifted.
 			if (event.touches.length === 0) {
-				resetInteraction(); // Emits wall changes if drawing
+				resetInteraction();
 			}
 		});
 
@@ -3089,6 +3075,26 @@ document.addEventListener('DOMContentLoaded', () => {
 				} else {
 					showNotification("This action is DM-only.", true);
 				}
+			});
+		}
+		
+		const startInitiativeButton = document.getElementById('start-initiative-button');
+		const nextTurnButton = document.getElementById('next-turn-button');
+		const endInitiativeButton = document.getElementById('end-initiative-button');
+
+		if (startInitiativeButton) {
+			startInitiativeButton.addEventListener('click', () => {
+				if (currentRole === 'dm') socket.emit('startInitiative');
+			});
+		}
+		if (nextTurnButton) {
+			nextTurnButton.addEventListener('click', () => {
+				if (currentRole === 'dm') socket.emit('nextTurn');
+			});
+		}
+		if (endInitiativeButton) {
+			endInitiativeButton.addEventListener('click', () => {
+				if (currentRole === 'dm') socket.emit('endInitiative');
 			});
 		}
 
@@ -3177,8 +3183,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 			// --- Corrected: These state updates must be *after* the tokensData and grid size are loaded ---
 			isGridVisible = data.isGridVisible !== undefined ? Boolean(data.isGridVisible) : true; // Ensure boolean
-			isMapFullyVisible = data.isMapFullyVisible !== undefined ? Boolean(data.isMapFullyVisible) : false; // NEW: Init map visibility toggle state (Ensure boolean)
-
+			isMapFullyVisible = data.isMapFullyVisible !== undefined ? Boolean(data.isMapFullyVisible) : false; 
+			initiativeTracker = data.initiativeTracker || { tokenOrder: [], currentIndex: -1, roundCount: 0 };
+			renderInitiativeTracker();
 			// Set grid size select value based on loaded size
 			const loadedSizeKey = Object.keys(gridSizeOptions).find(
 				key => gridSizeOptions[key].width === currentGridWidthCells &&
@@ -3258,7 +3265,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 				// --- Corrected: These state updates must be *after* the tokensData and grid size are loaded ---
 				isGridVisible = state.isGridVisible !== undefined ? Boolean(state.isGridVisible) : true; // Ensure boolean
-				isMapFullyVisible = state.isMapFullyVisible !== undefined ? Boolean(state.isMapFullyVisible) : false; // NEW: Update map visibility state (Ensure boolean)
+				isMapFullyVisible = state.isMapFullyVisible !== undefined ? Boolean(state.isMapFullyVisible) : false; 
+				initiativeTracker = state.initiativeTracker || { tokenOrder: [], currentIndex: -1, roundCount: 0 };
+				renderInitiativeTracker();
 
 
 				const loadedSizeKey = Object.keys(gridSizeOptions).find(
@@ -3470,6 +3479,12 @@ socket.on('updateTokens', (tokens) => {
 
 		socket.on('saveSuccess', (message) => {
 			showNotification(message);
+		});
+		
+		socket.on('updateInitiativeTracker', (trackerState) => {
+			initiativeTracker = trackerState;
+			renderInitiativeTracker();
+			drawGrid(); // Redraw to update the highlight on the active token
 		});
 
 		socket.on('clients', (clientUsernames) => { // Server now sends usernames

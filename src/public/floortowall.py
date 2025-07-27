@@ -36,6 +36,90 @@ MONSTER_MANUAL = [
     {
         "name": "Ogre", "size": 2, "imageUrl": "images/ogre.png",
         "hit_dice": "7d10+21", "ac": 11, "initiative_bonus": -1, "sightRadius": 60
+    },
+    {
+        "name": "Adherer", "size": 1, "imageUrl": "images/Adherer.jpg",
+        "hit_dice": "5d8+10", "ac": 14, "initiative_bonus": 1, "sightRadius": 60
+    },
+    {
+        "name": "Athasian Sloth", "size": 2, "imageUrl": "images/Athasian_Sloth.jpg",
+        "hit_dice": "8d10+32", "ac": 12, "initiative_bonus": -2, "sightRadius": 60
+    },
+    {
+        "name": "Beholder", "size": 2, "imageUrl": "images/Beholder.jpg",
+        "hit_dice": "11d10+44", "ac": 18, "initiative_bonus": 2, "sightRadius": 120
+    },
+    {
+        "name": "Carrion Crawler", "size": 2, "imageUrl": "images/Carrion Crawler.jpg",
+        "hit_dice": "6d10+18", "ac": 13, "initiative_bonus": 1, "sightRadius": 60
+    },
+    {
+        "name": "Chitin Golem", "size": 2, "imageUrl": "images/Chitin_Golem.jpg",
+        "hit_dice": "10d10+40", "ac": 17, "initiative_bonus": -1, "sightRadius": 60
+    },
+    {
+        "name": "Cistern Fiend", "size": 2, "imageUrl": "images/Cistern_Fiend.jpg",
+        "hit_dice": "7d10+21", "ac": 15, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Desert Centaur", "size": 2, "imageUrl": "images/Desert_Centar.jpg",
+        "hit_dice": "6d10+12", "ac": 12, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Draconian", "size": 1, "imageUrl": "images/Draconian.jpg",
+        "hit_dice": "4d8+8", "ac": 15, "initiative_bonus": 1, "sightRadius": 60
+    },
+    {
+        "name": "Female Elf", "size": 1, "imageUrl": "images/Female_Elf.jpg",
+        "hit_dice": "5d8+5", "ac": 14, "initiative_bonus": 3, "sightRadius": 60
+    },
+    {
+        "name": "Forest Spirit", "size": 1, "imageUrl": "images/Forest_Spirit.jpg",
+        "hit_dice": "6d8+12", "ac": 13, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Gelatinous Cube", "size": 2, "imageUrl": "images/Gelatinous_Cube.jpg",
+        "hit_dice": "9d10+36", "ac": 6, "initiative_bonus": -3, "sightRadius": 60
+    },
+    {
+        "name": "Ghost", "size": 1, "imageUrl": "images/Ghost.jpg",
+        "hit_dice": "7d8", "ac": 11, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Harpy", "size": 1, "imageUrl": "images/Harpy.jpg",
+        "hit_dice": "6d8+6", "ac": 11, "initiative_bonus": 1, "sightRadius": 60
+    },
+    {
+        "name": "Kirre", "size": 2, "imageUrl": "images/Kirre.jpg",
+        "hit_dice": "7d10+14", "ac": 14, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Male Elf", "size": 1, "imageUrl": "images/Male_Elf.jpg",
+        "hit_dice": "5d8+5", "ac": 15, "initiative_bonus": 3, "sightRadius": 60
+    },
+    {
+        "name": "Male Gnome", "size": 1, "imageUrl": "images/Male_Gnome.jpg",
+        "hit_dice": "4d6+4", "ac": 13, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Rastipede", "size": 2, "imageUrl": "images/Rastipede.jpg",
+        "hit_dice": "8d10+24", "ac": 16, "initiative_bonus": 0, "sightRadius": 60
+    },
+    {
+        "name": "Stellar Dragon", "size": 3, "imageUrl": "images/Stellar_Dragon.jpg",
+        "hit_dice": "15d12+75", "ac": 19, "initiative_bonus": 0, "sightRadius": 120
+    },
+    {
+        "name": "Storm Giant", "size": 3, "imageUrl": "images/Storm_Giant.jpg",
+        "hit_dice": "16d12+80", "ac": 16, "initiative_bonus": 2, "sightRadius": 60
+    },
+    {
+        "name": "Vampire", "size": 1, "imageUrl": "images/Vampire1.jpg",
+        "hit_dice": "12d8+48", "ac": 16, "initiative_bonus": 4, "sightRadius": 120
+    },
+    {
+        "name": "Zombies", "size": 1, "imageUrl": "images/Zombies.jpg",
+        "hit_dice": "3d8+9", "ac": 8, "initiative_bonus": -2, "sightRadius": 60
     }
 ]
 

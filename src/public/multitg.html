@@ -226,7 +226,7 @@
         #background-form button {
             width: 100%;
             height: 36px;
-            padding: 8px;
+            padding: 8px 6px;
             font-size: 14px;
             cursor: pointer;
             border-radius: 4px;
@@ -460,6 +460,46 @@
 			background-color: #5c67f2;
 			color: white;
 		}
+		#initiative-tracker-list {
+			max-height: 200px;
+			overflow-y: auto;
+			border: 1px solid #ccc;
+			padding: 5px;
+			margin-top: 5px;
+			list-style: none;
+			margin-left: 0;
+			padding-left: 0;
+		}
+		.dark-mode #initiative-tracker-list {
+			border-color: #555;
+		}
+		.initiative-item {
+			padding: 4px 8px;
+			border-bottom: 1px solid #eee;
+			display: flex;
+			justify-content: space-between;
+			font-size: 14px;
+		}
+		.dark-mode .initiative-item {
+			border-bottom-color: #444;
+		}
+		.initiative-item.active-turn {
+			background-color: #f0ad4e;
+			color: white;
+			font-weight: bold;
+		}
+		.dark-mode .initiative-item.active-turn {
+			background-color: #c18d3a;
+		}
+		#initiative-tracker-controls {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 8px;
+			margin-top: 8px;
+		}
+		#end-initiative-button {
+			grid-column: 1 / -1; /* Make End button span full width */
+		}
     </style>
 </head>
 <body>
@@ -490,6 +530,8 @@
                 <button id="draw-wall-button" class="dm-controls">Draw Walls</button>
                 <button id="erase-wall-button" class="dm-controls">Erase Walls</button>
 				<button id="reset-view-button">Reset View</button>
+				<button id="toggle-labels-button">Hide Labels</button>
+				<button id="show-guide-button">User Guide</button>
             </div>
 
             <!-- Save Controls -->
@@ -503,6 +545,21 @@
 			<div id="dangerous-actions" class="dm-controls" style="margin-top: 15px; padding-top: 10px; border-top: 1px dashed #ccc;">
 				<button id="clear-board-button" class="dm-controls destructive-action-button">⚠️ CLEAR BOARD ⚠️</button>
 			</div>
+			
+			<details id="initiative-tracker-panel" open>
+				<summary>Initiative Tracker</summary>
+				<div id="initiative-tracker-header" style="font-weight: bold; margin: 4px 0; text-align: center;">
+					<!-- Round count will be inserted here -->
+				</div>
+				<ul id="initiative-tracker-list">
+					<!-- Initiative order will be populated here -->
+				</ul>
+				<div id="initiative-tracker-controls" class="dm-controls">
+					<button id="start-initiative-button">Start</button>
+					<button id="next-turn-button">Next</button>
+					<button id="end-initiative-button" class="destructive-action-button">End Combat</button>
+				</div>
+			</details>
 
             <details class="dm-controls">
                 <summary>Tokens</summary>
@@ -641,24 +698,6 @@
                             <!-- Dice results will appear here -->
                         </div>
                     </div>
-                </div>
-            </details>
-
-            <details id="instructions-section">
-                <summary>Instructions</summary>
-                <div id="instructions">
-                    <p><strong>Instructions:</strong></p>
-                    <ul>
-                        <li>DM: Add tokens/background, draw walls, manage scene.</li>
-                        <li>DM: Set Max HP and Current HP for tokens; lower HP adds a red tint.</li>
-                        <li>Players: Add/move your own tokens.</li>
-                        <li>Tap/drag tokens to move (Interact mode).</li>
-                        <li>Long-press tokens to rotate (or remove/edit for DM).</li>
-                        <li>Pinch to zoom, drag to pan.</li>
-                        <li>DM: Draw/Erase Walls in respective modes.</li>
-                        <li>DM: Save state locally, download, or import for transfer.</li>
-                        <li>Reset View to center grid.</li>
-                    </ul>
                 </div>
             </details>
 
