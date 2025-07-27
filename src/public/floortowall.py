@@ -50,7 +50,7 @@ MONSTER_MANUAL = [
         "hit_dice": "11d10+44", "ac": 18, "initiative_bonus": 2, "sightRadius": 120
     },
     {
-        "name": "Carrion Crawler", "size": 2, "imageUrl": "images/Carrion Crawler.jpg",
+        "name": "Carrion Crawler", "size": 2, "imageUrl": "images/Carrion_Crawler.jpg",
         "hit_dice": "6d10+18", "ac": 13, "initiative_bonus": 1, "sightRadius": 60
     },
     {
