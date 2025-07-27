@@ -1,14 +1,27 @@
-ThorGridVTT has evolved significantly since its initial release. What started as a lightweight map-and-token tool has grown into a feature-rich virtual tabletop with a powerful dice roller, dynamic fog of war, and cross-platform support.
+# Thor-Grid VTT
+
+**A simple, self-hosted, cross-platform virtual tabletop for local network TTRPG sessions.**
 
 ---
 
-### **Downloads**
-*   **[Download the User Guide (PDF)](https://github.com/Thor-Grid/ThorGridVTT/blob/main/Thor-Grid%20User%20Guide.pdf)**
-*   **[Go to the Latest Release](https://github.com/Thor-Grid/ThorGridVTT/releases/latest)**
+## Latest Release: Version 3.4.0 - The Combat Update
+
+This version introduces a full initiative tracker, a UI label toggle to reduce clutter, a massively expanded monster library, and many other quality-of-life improvements.
+
+**> > > [Download v3.4.0 Here](https://github.com/Thor-Grid/ThorGridVTT/releases/latest) < < <**
+
+The full, detailed user guide is included with the application and available as a PDF in the release downloads.
 
 ---
 
 ## Version History
+
+### **v3.4.0 - The Combat & Content Update**
+*   **Full Initiative Tracker:** Start combat, automatically sort tokens by initiative, and advance through turns. Any token with an initiative of 0 is ignored.
+*   **Active Turn Highlighting:** The token whose turn it is gets a bright yellow highlight on the map.
+*   **Show/Hide Labels Toggle:** Clean up a cluttered map by hiding all token labels except for the one you are hovering over or have selected.
+*   **Expanded Monster Library:** The Python dungeon generator and the downloadable `monsters.zip` now include over 25 unique creature types.
+*   **User Guide in App:** Access the full user guide via a button in the control panel, which works in both the desktop app and browsers.
 
 ### **v3.3.x - The Context Menu & Portability Revolution**
 
